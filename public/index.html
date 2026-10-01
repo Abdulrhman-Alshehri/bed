@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice Checker</title>
+<script src="/jszip.min.js"></script>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --text:#1d1d1f; --muted:#6b6b73; --border:#e2e2e6;
+          --ok:#1a7f37; --okbg:#e8f6ec; --warn:#9a6700; --warnbg:#fff6dd; --bad:#c62828; --badbg:#fdecec; --accent:#2f5bea; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:1300px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  textarea { width:100%; min-height:160px; font:12px/1.4 ui-monospace, Menlo, Consolas, monospace; padding:8px;
+             border:1px solid var(--border); border-radius:6px; resize:vertical; white-space:pre; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:9px 16px; font-size:14px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  button.secondary { background:#fff; color:var(--text); border:1px solid var(--border); }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .muted { color:var(--muted); }
+  #progress { margin-left:8px; }
+  .summary { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .pill { padding:4px 10px; border-radius:999px; font-weight:600; font-size:13px; }
+  .pill.ok { color:var(--ok); background:var(--okbg); } .pill.warn { color:var(--warn); background:var(--warnbg); } .pill.bad { color:var(--bad); background:var(--badbg); }
+  .tablewrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border-bottom:1px solid var(--border); padding:6px 8px; text-align:left; vertical-align:top; white-space:nowrap; }
+  th { background:#fafafa; position:sticky; top:0; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  td.wrap { white-space:normal; min-width:220px; }
+  tr.ok td:first-child { box-shadow: inset 3px 0 var(--ok); }
+  tr.warn td:first-child { box-shadow: inset 3px 0 var(--warn); }
+  tr.bad td:first-child { box-shadow: inset 3px 0 var(--bad); }
+  td.cell-ok { background:var(--okbg); } td.cell-warn { background:var(--warnbg); } td.cell-bad { background:var(--badbg); }
+  ul { margin:6px 0 0; padding-left:18px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Invoice Checker</h1>
+  <p class="sub">Upload a zip of invoices, paste your table, and Claude reads each invoice to check that the date and amount match the invoice number.</p>
+
+  <div class="card">
+    <h2>1. Invoices zip</h2>
+    <input type="file" id="zip" accept=".zip">
+    <span class="muted" id="zipInfo"></span>
+  </div>
+
+  <div class="card">
+    <h2>2. Your table</h2>
+    <p class="muted" style="margin-top:0">Copy it from Excel (including the header row) and paste it here. Columns needed: <b>Invoice</b>, <b>Date</b>, <b>Amount</b>. Other columns are kept as they are.</p>
+    <textarea id="table" placeholder="Vendor Name&#9;Date&#9;Serial&#9;Month&#9;Invoice&#9;Amount&#9;Currency&#9;Action Owner&#10;Support Source Company&#9;6/30/2026&#9;1&#9;Yes&#9;INV/2026/00898&#9;20,148.00&#9;SAR&#9;abdulrahman"></textarea>
+    <p class="muted">Dates: <code>6/30/2026</code> is read as month/day/year, <code>31-05-26</code> as day-month-year, and <code>2026-06-30</code> as ISO.</p>
+  </div>
+
+  <div class="row" style="margin-bottom:16px">
+    <button id="run">Validate</button>
+    <button id="export" class="secondary hidden">Download CSV</button>
+    <span id="progress" class="muted"></span>
+  </div>
+
+  <div id="results" class="card hidden">
+    <div class="summary" id="summary"></div>
+    <div class="tablewrap"><table id="out"></table></div>
+    <div id="extras"></div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const CONCURRENCY = 3;
+const MEDIA = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+let lastRows = null;
+
+// ---------- parsing helpers ----------
+function parseTable(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) throw new Error("Paste a header row plus at least one data row.");
+  const sep = lines[0].includes("\t") ? "\t" : ",";
+  const split = (l) => (sep === "\t" ? l.split("\t") : l.match(/("([^"]|"")*"|[^,]*)(,|$)/g).slice(0, -1).map((c) => c.replace(/,$/, "").replace(/^"|"$/g, "").replace(/""/g, '"')));
+  const headers = split(lines[0]).map((h) => h.trim());
+  const find = (re) => headers.findIndex((h) => re.test(h));
+  const col = { invoice: find(/invoice|inv\b|inv no/i), date: find(/date/i), amount: find(/amount|total|value/i), currency: find(/currency|curr/i) };
+  if (col.invoice < 0 || col.date < 0 || col.amount < 0) throw new Error("Header row must include Invoice, Date and Amount columns. Found: " + headers.join(", "));
+  const rows = lines.slice(1).map((l) => {
+    const cells = split(l).map((c) => c.trim());
+    return { cells, invoice: cells[col.invoice] || "", date: cells[col.date] || "", amount: cells[col.amount] || "", currency: col.currency >= 0 ? cells[col.currency] || "" : "" };
+  });
+  return { headers, rows };
+}
+
+// Key used to match invoice numbers: last group of digits without leading zeros (INV/2026/00898 -> "898").
+function invKey(s) {
+  const groups = String(s || "").match(/\d+/g);
+  return groups ? String(Number(groups[groups.length - 1])) : "";
+}
+
+function pad(n) { return String(n).padStart(2, "0"); }
+function iso(y, m, d) {
+  y = Number(y); m = Number(m); d = Number(d);
+  if (y < 100) y += 2000;
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  return `${y}-${pad(m)}-${pad(d)}`;
+}
+function parseDate(s) {
+  s = String(s || "").trim();
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return iso(m[1], m[2], m[3]);
+  if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/))) return Number(m[1]) > 12 ? iso(m[3], m[2], m[1]) : iso(m[3], m[1], m[2]); // M/D/Y unless impossible
+  if ((m = s.match(/^(\d{1,2})[-.](\d{1,2})[-.](\d{2,4})$/))) return Number(m[2]) > 12 ? iso(m[3], m[1], m[2]) : iso(m[3], m[2], m[1]); // D-M-Y unless impossible
+  const t = Date.parse(s);
+  return isNaN(t) ? null : new Date(t).toISOString().slice(0, 10);
+}
+function parseAmount(s) {
+  const n = Number(String(s || "").replace(/[^0-9.\-]/g, ""));
+  return String(s || "").trim() === "" || isNaN(n) ? null : n;
+}
+function normCurrency(c) {
+  c = String(c || "").trim().toUpperCase();
+  return c === "SR" || c === "ر.س" ? "SAR" : c;
+}
+const fmt = (n) => (n == null ? "" : n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---------- zip + API ----------
+function toBase64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function readZip(file) {
+  const zip = await JSZip.loadAsync(file);
+  const files = [], skipped = [];
+  zip.forEach((p, entry) => {
+    if (entry.dir || p.startsWith("__MACOSX/") || p.split("/").pop().startsWith(".")) return;
+    const ext = p.split(".").pop().toLowerCase();
+    (MEDIA[ext] ? files : skipped).push({ path: p, entry, mediaType: MEDIA[ext] });
+  });
+  return { files, skipped: skipped.map((s) => s.path) };
+}
+
+async function extractFile(f) {
+  const bytes = await f.entry.async("uint8array");
+  const res = await fetch("/api/extract", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: f.path, mediaType: f.mediaType, data: toBase64(bytes) }),
+  });
+  const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
+
+async function runPool(items, worker, onDone) {
+  let i = 0;
+  const next = async () => { while (i < items.length) { const it = items[i++]; await worker(it); onDone(); } };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, next));
+}
+
+// ---------- validation ----------
+function validate(row, found) {
+  if (!found.length) return { status: "bad", msg: "Invoice not found in the zip", cells: {} };
+  const inv = found[0].inv;
+  const issues = [], warns = [], cells = {};
+
+  const tDate = parseDate(row.date);
+  if (!tDate) { issues.push(`Can't read table date "${row.date}"`); cells.date = "bad"; }
+  else if (tDate === inv.invoice_date) cells.date = "ok";
+  else if (tDate === inv.due_date) { warns.push(`Date is the due date; invoice date is ${inv.invoice_date}`); cells.date = "warn"; }
+  else { issues.push(`Date mismatch: table ${tDate}, invoice ${inv.invoice_date || "?"}`); cells.date = "bad"; }
+
+  const tAmt = parseAmount(row.amount);
+  if (tAmt == null) { issues.push(`Can't read table amount "${row.amount}"`); cells.amount = "bad"; }
+  else if (inv.total_incl_vat != null && Math.abs(tAmt - inv.total_incl_vat) < 0.01) cells.amount = "ok";
+  else if (inv.total_excl_vat != null && Math.abs(tAmt - inv.total_excl_vat) < 0.01) { warns.push("Amount matches the total before VAT, not the total incl. VAT"); cells.amount = "warn"; }
+  else { issues.push(`Amount mismatch: table ${fmt(tAmt)}, invoice ${fmt(inv.total_incl_vat)} (diff ${fmt(tAmt - (inv.total_incl_vat ?? 0))})`); cells.amount = "bad"; }
+
+  if (row.currency && inv.currency && normCurrency(row.currency) !== normCurrency(inv.currency)) { issues.push(`Currency: table ${row.currency}, invoice ${inv.currency}`); cells.currency = "bad"; }
+
+  const distinct = new Set(found.map((f) => `${f.inv.invoice_date}|${f.inv.total_incl_vat}`));
+  if (distinct.size > 1) warns.push(`Appears in ${found.length} files with different values: ${found.map((f) => f.file).join(", ")}`);
+  if (inv.notes) warns.push("AI note: " + inv.notes);
+
+  const status = issues.length ? "bad" : warns.length ? "warn" : "ok";
+  return { status, msg: [...issues, ...warns].join(" · ") || "Date and amount match", cells };
+}
+
+// ---------- render ----------
+function render(table, rows, extracted, skipped, errors) {
+  const counts = { ok: 0, warn: 0, bad: 0 };
+  rows.forEach((r) => counts[r.result.status]++);
+  $("summary").innerHTML =
+    `<span class="pill ok">${counts.ok} match</span><span class="pill warn">${counts.warn} check</span><span class="pill bad">${counts.bad} mismatch / missing</span>`;
+
+  const dateIdx = table.headers.findIndex((h) => /date/i.test(h));
+  const amtIdx = table.headers.findIndex((h) => /amount|total|value/i.test(h));
+  const curIdx = table.headers.findIndex((h) => /currency|curr/i.test(h));
+  const head = `<tr><th>Result</th><th>Details</th>${table.headers.map((h) => `<th>${esc(h)}</th>`).join("")}<th>Invoice date (PDF)</th><th>Total incl. VAT (PDF)</th><th>File</th></tr>`;
+  const body = rows.map((r) => {
+    const inv = r.found[0]?.inv;
+    const icon = { ok: "✅", warn: "⚠️", bad: "❌" }[r.result.status];
+    const tds = r.cells.map((c, i) => {
+      const k = i === dateIdx ? r.result.cells.date : i === amtIdx ? r.result.cells.amount : i === curIdx ? r.result.cells.currency : null;
+      const isNum = i === amtIdx;
+      return `<td class="${k ? "cell-" + k : ""}${isNum ? " num" : ""}">${esc(c)}</td>`;
+    }).join("");
+    return `<tr class="${r.result.status}"><td>${icon}</td><td class="wrap">${esc(r.result.msg)}</td>${tds}<td>${esc(inv?.invoice_date)}</td><td class="num">${fmt(inv?.total_incl_vat)}</td><td>${esc(r.found.map((f) => f.file).join(", "))}</td></tr>`;
+  }).join("");
+  $("out").innerHTML = head + body;
+
+  const tableKeys = new Set(rows.map((r) => invKey(r.invoice)));
+  const notInTable = extracted.filter((e) => !tableKeys.has(invKey(e.inv.invoice_number)));
+  const seen = new Set();
+  const uniqueNotInTable = notInTable.filter((e) => !seen.has(e.inv.invoice_number) && seen.add(e.inv.invoice_number));
+  let extras = "";
+  if (uniqueNotInTable.length) extras += `<h2 style="margin-top:20px">Invoices in the zip but not in your table (${uniqueNotInTable.length})</h2><div class="tablewrap"><table><tr><th>Invoice</th><th>Invoice date</th><th>Total incl. VAT</th><th>Currency</th><th>File</th></tr>${uniqueNotInTable.map((e) => `<tr><td>${esc(e.inv.invoice_number)}</td><td>${esc(e.inv.invoice_date)}</td><td class="num">${fmt(e.inv.total_incl_vat)}</td><td>${esc(e.inv.currency)}</td><td>${esc(e.file)}</td></tr>`).join("")}</table></div>`;
+  if (errors.length) extras += `<h2 style="margin-top:20px">Files that failed (${errors.length})</h2><ul>${errors.map((e) => `<li><b>${esc(e.file)}</b>: ${esc(e.error)}</li>`).join("")}</ul>`;
+  if (skipped.length) extras += `<h2 style="margin-top:20px">Skipped files</h2><ul class="muted">${skipped.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>`;
+  $("extras").innerHTML = extras;
+  $("results").classList.remove("hidden");
+}
+
+function exportCsv() {
+  if (!lastRows) return;
+  const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [[...lastRows.table.headers, "Result", "Invoice date (PDF)", "Total incl. VAT (PDF)", "File", "Details"].map(q).join(",")];
+  for (const r of lastRows.rows) {
+    const inv = r.found[0]?.inv;
+    lines.push([...r.cells, { ok: "MATCH", warn: "CHECK", bad: "MISMATCH" }[r.result.status], inv?.invoice_date, inv?.total_incl_vat, r.found.map((f) => f.file).join("; "), r.result.msg].map(q).join(","));
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv" }));
+  a.download = "invoice-check.csv";
+  a.click();
+}
+
+// ---------- main ----------
+$("zip").addEventListener("change", async () => {
+  const f = $("zip").files[0];
+  if (!f) return;
+  try {
+    const { files, skipped } = await readZip(f);
+    $("zipInfo").textContent = `${files.length} PDF/image files${skipped.length ? `, ${skipped.length} other files will be skipped` : ""}`;
+  } catch (e) { $("zipInfo").textContent = "Could not read zip: " + e.message; }
+});
+
+$("run").addEventListener("click", async () => {
+  const zipFile = $("zip").files[0];
+  if (!zipFile) return alert("Choose a zip file first.");
+  let table;
+  try { table = parseTable($("table").value); } catch (e) { return alert(e.message); }
+
+  $("run").disabled = true;
+  $("export").classList.add("hidden");
+  try {
+    const { files, skipped } = await readZip(zipFile);
+    const extracted = [], errors = [];
+    let done = 0;
+    const tick = () => ($("progress").textContent = `Reading invoices with AI… ${done}/${files.length}`);
+    tick();
+    await runPool(files, async (f) => {
+      try {
+        const r = await extractFile(f);
+        if (!r.is_invoice || !r.invoices.length) skipped.push(f.path + " (not an invoice)");
+        for (const inv of r.invoices) extracted.push({ file: f.path, inv });
+      } catch (e) { errors.push({ file: f.path, error: e.message }); }
+    }, () => { done++; tick(); });
+
+    const byKey = new Map();
+    for (const e of extracted) {
+      const k = invKey(e.inv.invoice_number);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(e);
+    }
+    const rows = table.rows.map((row) => {
+      const found = byKey.get(invKey(row.invoice)) || [];
+      return { ...row, found, result: validate(row, found) };
+    });
+    lastRows = { table, rows };
+    render(table, rows, extracted, skipped, errors);
+    $("progress").textContent = `Done. ${files.length} files read.`;
+    $("export").classList.remove("hidden");
+  } catch (e) {
+    $("progress").textContent = "Error: " + e.message;
+  } finally {
+    $("run").disabled = false;
+  }
+});
+$("export").addEventListener("click", exportCsv);
+</script>
+</body>
+</html>
