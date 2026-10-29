@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# Copied from node_modules by scripts/copy-ocr-assets.mjs
+public/ocr/
+# E2E test output (synthetic documents, screenshots, downloads)
+tests/e2e/output/
+*.log
+.DS_Store
+*.tsbuildinfo
