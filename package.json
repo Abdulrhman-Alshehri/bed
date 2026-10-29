@@ -1,0 +1,40 @@
+{
+  "name": "visitor-registration-ocr",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Arabic-first visitor registration web app with in-browser OCR for IDs, residence permits and passports.",
+  "scripts": {
+    "prepare-assets": "node scripts/copy-ocr-assets.mjs",
+    "generate:countries": "node scripts/generate-countries.mjs",
+    "predev": "npm run prepare-assets",
+    "dev": "vite",
+    "prebuild": "npm run prepare-assets",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node tests/e2e/run-e2e.mjs"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-sans-arabic": "5.2.9",
+    "libphonenumber-js": "1.13.10",
+    "lucide-react": "1.28.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "tesseract.js": "7.0.0"
+  },
+  "devDependencies": {
+    "@tesseract.js-data/ara": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "@types/node": "22.18.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.1.2",
+    "i18n-iso-countries": "7.14.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12"
+  }
+}
