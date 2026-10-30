@@ -16,6 +16,8 @@ export interface FoundDate {
   hijri?: { year: number; month: number; day: number };
   /** Zeros missing from the OCR reading were restored from the date's structure. */
   reconstructed?: boolean;
+  /** Printed in Arabic-Indic digits (٠–٩), which the OCR engine reads poorly. */
+  arabicIndic?: boolean;
   /** Character offset in the searched text. */
   index: number;
 }
@@ -198,6 +200,8 @@ export function findDates(text: string, now = new Date()): FoundDate[] {
     const iso = isGregorianYear(year, now) ? toIsoDate(year, month, Number(m[1])) : null;
     if (iso) results.push({ iso, calendar: 'gregorian', raw: m[0], ambiguous: false, monthFirst: false, index: m.index });
   }
+  // normalizeDigits keeps the length, so offsets point into the original text.
+  for (const r of results) r.arabicIndic = /[٠-٩۰-۹]/.test(text.slice(r.index, r.index + r.raw.length));
   return results.sort((x, y) => x.index - y.index);
 }
 

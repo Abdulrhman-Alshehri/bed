@@ -31,9 +31,11 @@ The app is a three-step wizard. The step bar at the top allows moving between st
    - The card is cropped from the background when its edges are clear, then scaled for OCR.
    - Barcodes are decoded on the device with [zxing-wasm](https://github.com/Sec-ant/zxing-wasm). Saudi ID cards and Iqamas carry the ID number in a Code 128 barcode, which is far more reliable than reading digits.
    - [Tesseract.js](https://github.com/naptha/tesseract.js) runs in a Web Worker: an English pass (Latin text, digits, MRZ), an MRZ pass restricted to `A–Z 0–9 <`, and an Arabic pass in sparse-text mode (better on card layouts). The Arabic pass is skipped for passports with a verified MRZ from countries that do not print names in Arabic.
+   - Birth dates printed in Arabic-Indic digits (`٢٠٠٠/٠٨/١٤` on Iqamas, Hijri `١٤١٠/١٠/١٧` on national IDs) are read by a small dedicated digit reader next to the «تاريخ الميلاد» label, because Tesseract misreads these small digits (see [tools/digit-model](tools/digit-model/README.md)). The same reader also reads the ID number: when that matches the barcode, the date reading is trusted.
    - Extraction rules turn the text into candidates, from most to least reliable: **MRZ** with check digits; **barcode** ID number; **Saudi ID/Iqama numbers** (10 digits, prefix 1 or 2, Luhn); **printed labels** paired with their values by position (same row, then the line below), so a label like `مكان الميلاد` or `هوية صاحب العمل` is never mistaken for nationality or the holder's ID; and unlabeled heuristics, always low confidence.
    - Every value shows its source (`مستخرج من MRZ`, `مقروء من الباركود`, `مستخرج من النص`, `حسب القاعدة`, `مقترح من الاسم`, `قيمة افتراضية`, `معدّل يدويًا`). Uncertain values are amber, conflicts red, and alternatives (such as the Arabic name next to the MRZ's Latin name) are one-click suggestions.
    - Short choices are large buttons instead of drop-down lists. Nationality is typed as text and matched to the country list in the background (`مصري`، `EGYPTIAN`، `باكستان`). The calling code is a text box prefilled with `966`.
+   - The birth date is typed with the number keyboard (`14082000` → 14/08/2000, or year first as printed, `20000814`), in the Gregorian or Hijri calendar (national IDs open in Hijri). Under it, a zoomed picture of the date as printed on the document lets staff compare at a glance.
 3. **المراجعة والتأكيد (review).** One page lists the luggage and visitor data, blocking errors and non-blocking warnings, each linked to its field. After **أؤكد صحة البيانات** the page offers **نسخ البيانات**, **تصدير البيانات** (CSV), **زائر جديد** (clears everything after a confirmation) and **تعديل البيانات**. Any later edit invalidates the confirmation.
 
 ## Feasibility and limitations
@@ -44,10 +46,11 @@ This app was built to the BRD's requirement that OCR runs without a mandatory ba
 |---|---|---|
 | Passport MRZ (number, nationality, birth date, sex, Latin name) | **High** when the MRZ is sharp | Check digits detect misreads, so a failed check is flagged instead of trusted. Names have no check digit. |
 | Saudi ID / Iqama number | **High** | Read from the barcode when it is in focus (all four photos of the test Iqama), otherwise from the digits with Luhn validation. |
+| Saudi digital national ID (Tawakkalna screenshot) | **High** in the one test so far | One real ID, shared by its owner for testing (not kept): all six fields correct; the Hijri date read by the digit reader confirmed the Gregorian date printed in Latin digits and settled its day/month order. |
 | GCC ID cards (back side with MRZ) | Medium–high | TD1 MRZ. Some cards (e.g. UAE) store the personal ID number in the optional data; it is suggested, with the card number as an alternative. |
 | Nationality next to its label | Medium | Matched against the country list, Arabic adjectives and English demonyms, allowing one or two misread letters (`افغاتستان` → أفغانستان). |
 | Dates next to a label | Medium | Day/month order is assumed day-first and flagged when ambiguous (05/06/1990). |
-| Dates in Arabic-Indic digits (Iqama) | **Low** | Tesseract misreads small `٠٩٨٧` digits, and other engines drop `٠`. A date rebuilt from missing zeros is offered only when exactly one valid date fits, and always flagged. |
+| Birth dates in Arabic-Indic digits (Iqama, national ID) | **Medium–high** when the label is found | Read by the dedicated digit reader: correct in 3 of 4 photos of the fictional Iqama (the fourth had the card too small in the frame). On synthetic dates in unseen fonts with digits 10 px or taller, about 74% of readings were confident and none of those was wrong; uncertain readings are only suggested, next to the picture of the printed date. |
 | Hijri birth dates | Medium | Converted with the browser's Umm al-Qura calendar. Older dates can differ by one day from the calendar in use at the time, so converted dates are always flagged. |
 | Arabic names on real cards | **Low–medium** | Security backgrounds, small fonts and glare. Expect manual correction. |
 | Gender on Saudi IDs | Not printed | Suggested from the name (`بن`/`بنت`, common names) with low confidence and flagged; otherwise left for staff to choose. Never guessed from the photo. |
@@ -55,7 +58,7 @@ This app was built to the BRD's requirement that OCR runs without a mandatory ba
 Other limitations:
 
 - **Tested with one fictional specimen and synthetic documents.** The OCR was measured on four photos of a fictional Iqama specimen and on rendered synthetic documents (see the comparison below). Accuracy on real IDs, residence permits and passports, and on the Android devices staff use, has **not** been measured yet. Run the accuracy section of [docs/TESTING.md](docs/TESTING.md) with consented sample documents before go-live.
-- **Performance.** The first extraction in a session downloads about 9 MB (Tesseract WASM core about 3.9 MB, English model 3.0 MB, Arabic model 1.7 MB, barcode reader about 1 MB). In testing (headless Chromium on a server) one document took 3–8 seconds. Phones will be slower and have not been measured.
+- **Performance.** The first extraction in a session downloads about 9 MB (Tesseract WASM core about 3.9 MB, English model 3.0 MB, Arabic model 1.7 MB, barcode reader about 1 MB, digit reader about 60 KB compressed). In testing (headless Chromium on a server) one document took 3–8 seconds. Phones will be slower and have not been measured.
 - **Cropping is basic.** The card is cut out only when its edges contrast with the background. There is no perspective correction: photograph the document filling the frame, straight, without glare.
 - **Rotation** is manual (90° buttons). Orientation detection would need the legacy Tesseract model (about 10 MB more).
 - **HEIC** files are not accepted directly. iPhones convert photos to JPEG when uploading through the browser.
@@ -69,7 +72,8 @@ Three options were tried on the same images: four photos of a fictional Iqama sp
 |---|---|---|---|---|---|---|
 | Tesseract.js, before this round | about 0/24 | — | — | Browser | 8.5 MB | 3–5 s |
 | Tesseract.js, auto layout | 14/24 | 32 correct, 2 wrong (flagged), 8 empty | 0 | Browser | 8.5 MB | 5–8 s |
-| **Tesseract.js, sparse Arabic pass (current)** | 16/24 (17/24 in the browser build) | 34 correct, 1 wrong (flagged), 7 empty | 0 | Browser | 8.5 MB | 5–8 s |
+| Tesseract.js, sparse Arabic pass | 16/24 (17/24 in the browser build) | 34 correct, 1 wrong (flagged), 7 empty | 0 | Browser | 8.5 MB | 5–8 s |
+| **Tesseract.js + digit reader for dates (current)** | **20/24** (browser build) | **38 correct, 1 wrong (flagged), 3 empty** | 0 | Browser | 8.6 MB | 5–8 s |
 | PaddleOCR (PP-OCR, ONNX) | 22/24 | 36 correct, 3 wrong (flagged), 3 empty | 0 | Tested in Python; browser port measured with onnxruntime-web | about 34 MB | about 2–3× Tesseract |
 | Cloud OCR / vision model | Not run | — | — | Sends the image off the device | — | — |
 
@@ -78,7 +82,8 @@ Findings:
 - **PaddleOCR reads Arabic card layouts clearly better** (it was the only engine to read the Iqama's birth date, in 2 of 4 photos), but it was worse on the synthetic Latin documents (14/18 vs 18/18), its model is about four times larger, and in the browser (onnxruntime-web, single thread) detection plus recognition took about 7 seconds after a 2.5-second load on a server CPU. A phone will be slower. Its Arabic character set also lacks `٠`.
 - **Cloud OCR** was not run: there was no approved service or key, and sending identity documents to a third party needs the authority's approval and a privacy assessment under the BRD. It would likely read everything printed on the card, at the cost of privacy, network dependence and per-image fees. Enabling it would also require changing the CSP.
 - The barcode was the most reliable source for the ID/Iqama number in every engine configuration.
-- The current build uses Tesseract with the sparse Arabic pass. Switching engines only requires a new `OcrEngine` adapter (see [Replacing the OCR engine](#replacing-the-ocr-engine)); the extraction rules stay the same.
+- The birth date was the main gap of Tesseract on Saudi cards. The dedicated digit reader closed it (0/4 → 3/4 on the fictional Iqama) and brought the browser build to 38 of 42 fields overall, ahead of PaddleOCR (36), though still behind it on the Iqama alone (20 vs 22 of 24).
+- The current build uses Tesseract with the sparse Arabic pass and the digit reader. Switching engines only requires a new `OcrEngine` adapter (see [Replacing the OCR engine](#replacing-the-ocr-engine)); the extraction rules stay the same.
 
 ## Business rules and design decisions
 
@@ -86,7 +91,8 @@ All BRD rules (BR-01 to BR-14) are implemented in `src/domain/` and covered by u
 
 | Topic | Decision | Why |
 |---|---|---|
-| Hijri dates | Detected (years 1300–1500) and converted to Gregorian; the form shows both calendars and has a Hijri entry helper. | The BRD does not mention Hijri, but Saudi IDs commonly print Hijri birth dates. Reading `1410/10/17` as a Gregorian date would be badly wrong. |
+| Hijri dates | Detected (years 1300–1500) and converted to Gregorian; the form shows both calendars, and the date can be typed in either. | The BRD does not mention Hijri, but Saudi IDs commonly print Hijri birth dates. Reading `1410/10/17` as a Gregorian date would be badly wrong. |
+| Birth dates read by the digit reader | A confident reading fills the field. It is flagged for comparison with the picture of the printed date unless the same reader also read the ID number correctly (it matches the barcode) on that photo; Hijri readings are always flagged. An uncertain reading is not filled in: it is offered as a one-click suggestion, so staff must compare it first. A date the OCR read in Latin digits is kept, with the digit reading as a second opinion. | A wrong birth date that looks confirmed is worse than an empty field. |
 | Step order | Luggage → visitor data → review. | Staff record the luggage while the visitor takes out their ID. |
 | Luggage | Pieces counted per type; **one size for all the visitor's luggage together**, on the wall's five-level scale. At least one piece and a size are required. | Assumption based on the official system's single size field. If each piece needs its own size, the model in `src/domain/types.ts` must change. |
 | Lists | No drop-down lists. Short choices are buttons; nationality and calling code are typed. | Long lists were hard to use on phones. The typed nationality is matched to the country list, so visitor type and calling code still follow the rules; an unmatched nationality is a warning and visitor type is then left for staff. |
@@ -110,6 +116,7 @@ All BRD rules (BR-01 to BR-14) are implemented in `src/domain/` and covered by u
 - **Enforced by Content Security Policy.** The production build sets `connect-src 'self'`, `default-src 'self'` and so on. Even a bug or a compromised dependency cannot send data to another origin. The end-to-end test verifies that no request leaves the site and that there are no CSP violations.
 - **No persistent storage.** Nothing is written to localStorage, sessionStorage, IndexedDB or cookies; the test verifies this. Tesseract's IndexedDB model cache is disabled (`cacheMethod: 'none'`), and models are cached only by the browser's normal HTTP cache.
 - **Reset (`مسح النموذج`, or `زائر جديد` after confirmation)** asks for confirmation, then clears the luggage and the form, closes the image bitmap, releases canvases and terminates the OCR workers, which hold copies of the image. JavaScript cannot guarantee when the garbage collector frees memory, so closing the tab is the strongest clear.
+- **The picture of the printed birth date** shown under the field is cut from the same in-memory image, is never exported, and is cleared with the document.
 - **No personal data in logs, URLs or file names.** Nothing is logged to the console in production. Exported files are named `visitor-registration-YYYYMMDD-HHMMSS.csv`.
 - **Outside the app's control:** copied text stays in the clipboard (and in clipboard-history tools), and downloaded CSV files are stored wherever the browser saves them. Handle them under your organization's data policy.
 - **GitHub Pages** hosts only the application code. It is not a database and receives no form data. Like any web host, GitHub sees visitors' IP addresses and user agents when the page is loaded.
@@ -163,7 +170,7 @@ The build uses a relative base path (`./`), so it works under any repository sub
 
 ## Testing
 
-- **Unit tests** (`npm test`, 129 tests): MRZ parsing against the ICAO 9303 specimens, check digits and OCR-noise correction, Saudi ID validation, Umm al-Qura conversion, date parsing, ambiguity and zero reconstruction, nationality matching (including misspellings), label/value pairing by layout (place-of-birth and employer-ID traps, barcode priority), gender from name, card cropping, every business rule in the form reducer, luggage validation, CSV/clipboard export.
+- **Unit tests** (`npm test`, 162 tests): MRZ parsing against the ICAO 9303 specimens, check digits and OCR-noise correction, Saudi ID validation, Umm al-Qura conversion, date parsing, ambiguity and zero reconstruction, nationality matching (including misspellings), label/value pairing by layout (place-of-birth and employer-ID traps, barcode priority), gender from name, card cropping, the digit reader (same results as the Python reference on synthetic dates in unseen fonts, date decoding, Hijri), typed dates, every business rule in the form reducer, luggage validation, CSV/clipboard export.
 - **End-to-end test** (`npm run test:e2e`): walks through the three steps in Chromium with real OCR on synthetic passport, Iqama-style and national-ID-style documents. It also checks luggage validation, typed nationality and calling code, review/confirm/export/copy, BR-14, reset and new visitor, network failure with retry, rotation, camera capture (fake device), CSP, no external requests, no storage, no drop-down lists, and mobile layout at 390 px on every step.
 - **Manual checklist**: [docs/TESTING.md](docs/TESTING.md) covers OCR accuracy with real documents, defaults, validation, devices, accessibility, privacy and Excel.
 
@@ -176,10 +183,12 @@ src/
   domain/                  Form state and business rules, validation, phone, export (pure, unit-tested)
   extraction/              MRZ, Saudi ID, dates/Hijri, nationality, labels and layout pairing, gender from name,
                            extraction rules (engine-agnostic)
-  ocr/                     Engine interface, Tesseract adapter, card crop, preprocessing, barcodes, OCR pipeline
+  ocr/                     Engine interface, Tesseract adapter, card crop, preprocessing, barcodes, Arabic-Indic
+                           digit reader, OCR pipeline
   hooks/useDocumentOcr.ts  Image state and OCR runs (loads the OCR code on first use)
   components/              React UI (luggage step, choice buttons, nationality, phone, dates, review step)
 scripts/                   OCR asset copy, country dataset generator
+tools/digit-model/         Training of the Arabic-Indic digit reader (Python; fonts and data not committed)
 tests/e2e/                 Synthetic documents and Playwright end-to-end test
 docs/TESTING.md            Manual testing checklist
 ```

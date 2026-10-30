@@ -9,7 +9,7 @@ export async function decodeImage(file: Blob): Promise<ImageBitmap> {
   return createImageBitmap(file, { imageOrientation: 'from-image' });
 }
 
-function createCanvas(width: number, height: number): HTMLCanvasElement {
+export function createCanvas(width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(width));
   canvas.height = Math.max(1, Math.round(height));

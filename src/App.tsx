@@ -9,6 +9,7 @@ import { RegistrationForm } from './components/RegistrationForm';
 import { ReviewStep } from './components/ReviewStep';
 import { buildExportCells, exportFileName, toClipboardText, toCsv } from './domain/export';
 import { createInitialState, formReducer } from './domain/formState';
+import type { ExtractionResult } from './extraction/result';
 import { MESSAGES } from './domain/labels';
 import { FIELD_ORDER, type FieldKey } from './domain/types';
 import { hasErrors, validateForm, type IssueField } from './domain/validation';
@@ -52,6 +53,8 @@ export function App() {
   const [luggageAttempted, setLuggageAttempted] = useState(false);
   const [reviewAttempted, setReviewAttempted] = useState(false);
   const [touched, setTouched] = useState<ReadonlySet<FieldKey>>(new Set());
+  // Pictures of parts of the document (birth date as printed). Cleared with the document.
+  const [evidence, setEvidence] = useState<ExtractionResult['evidence']>();
   const pendingFocus = useRef<string | null>(null);
   const firstRender = useRef(true);
   const messageTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -98,6 +101,7 @@ export function App() {
   };
 
   const onFile = async (file: File) => {
+    setEvidence(undefined);
     const error = await ocr.load(file);
     setDocMessage(error ? { kind: 'error', text: error } : null);
   };
@@ -111,6 +115,7 @@ export function App() {
     setMessage(null);
     const result = await ocr.extract();
     if (!result) return;
+    setEvidence(result.evidence);
     dispatch({ type: 'applyExtraction', result });
     document.getElementById('form-title')?.focus();
   };
@@ -158,6 +163,7 @@ export function App() {
     setReviewAttempted(false);
     setTouched(new Set());
     setDocMessage(null);
+    setEvidence(undefined);
     await ocr.reset();
     goTo(1);
     show({ kind: 'success', text: MESSAGES.cleared });
@@ -243,6 +249,7 @@ export function App() {
                   onRemove={() => {
                     ocr.remove();
                     setDocMessage(null);
+                    setEvidence(undefined);
                   }}
                 />
                 <StatusMessage message={docMessage} onDismiss={() => setDocMessage(null)} />
@@ -268,6 +275,7 @@ export function App() {
                   issues={issues}
                   visibleFields={visibleFields}
                   onFieldBlur={(field) => setTouched((t) => (t.has(field) ? t : new Set(t).add(field)))}
+                  evidence={evidence}
                 />
               </section>
             </div>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { extractFields } from './extract';
 import { genderFromArabicName } from './genderFromName';
+import type { DigitDate } from '../ocr/digitReader';
 import type { OcrLine, OcrPage } from '../ocr/types';
 import { FIXED_NOW, page, saudiId } from '../test/helpers';
 
@@ -144,5 +145,77 @@ describe('misread card text is not a name', () => {
     expect(unanchored.fields.gender).toBeUndefined();
     const anchored = extractFields({ latin: page([]), arabic: page(['الاسم: زبيدة أحمد سالم']), now: FIXED_NOW });
     expect(anchored.fields.gender?.value).toBe('female');
+  });
+});
+
+describe('Arabic-Indic birth dates from the digit reader', () => {
+  const iqamaId = saudiId('219173673');
+  const card = pageOf([at('تاريخ الميلاد:', 1000, 373, 1140), at('رقم الهوية:', 1000, 325, 1140), at('هوية مقيم', 100, 40, 260)]);
+  const reading = (over: Partial<DigitDate> = {}): DigitDate => ({
+    iso: '2000-08-14',
+    calendar: 'gregorian',
+    printed: '٢٠٠٠/٠٨/١٤',
+    score: -0.2,
+    margin: 6,
+    confident: true,
+    alternatives: ['2005-08-14'],
+    ...over,
+  });
+  const run = (birth: DigitDate, idNumber: string | null = null, latinLines: OcrLine[] = []) =>
+    extractFields({ latin: page([]), arabic: card, barcodes: [iqamaId], printedDigits: { birth, idNumber }, now: FIXED_NOW, ...(latinLines.length ? { latin: pageOf(latinLines) } : {}) }).fields.birthDate;
+
+  it('fills a confident reading, flagged for comparison with the document', () => {
+    expect(run(reading())).toMatchObject({ value: '2000-08-14', confidence: 'medium', source: 'ocr' });
+  });
+
+  it('trusts it when the same reader read the ID number correctly on this photo', () => {
+    expect(run(reading(), iqamaId)).toMatchObject({ value: '2000-08-14', confidence: 'high' });
+  });
+
+  it('does not count a wrong ID reading as a check', () => {
+    expect(run(reading(), '2191736730')?.confidence).toBe('medium');
+  });
+
+  it('only suggests an uncertain reading: the field stays empty until staff compare it', () => {
+    const c = run(reading({ confident: false, margin: 0.8 }));
+    expect(c?.value).toBe('');
+    expect(c?.alternatives?.[0]).toMatchObject({ value: '2000-08-14' });
+    expect(c?.note).toContain('٢٠٠٠/٠٨/١٤');
+  });
+
+  it('keeps a date read normally from the text and offers the digit reading as an alternative', () => {
+    const c = run(reading({ iso: '2000-08-11' }), null, [at('Date of Birth: 14/08/2000', 100, 200, 600)]);
+    expect(c?.value).toBe('2000-08-14');
+    expect(c?.alternatives?.some((a) => a.value === '2000-08-11')).toBe(true);
+  });
+
+  it('keeps an ambiguous Latin-digit date (flagged) instead of an uncertain digit reading', () => {
+    const c = run(reading({ iso: '1985-03-11', confident: false, margin: 0.5 }), null, [at('تاريخ الميلاد: 03/11/1985', 100, 200, 600)]);
+    expect(c).toMatchObject({ value: '1985-11-03', confidence: 'low' });
+    expect((c?.alternatives ?? []).some((a) => a.value === '1985-03-11')).toBe(false);
+  });
+
+  it('confirms a Latin-digit date with the Hijri date printed beside it, settling the day/month order', () => {
+    const hijri = { iso: '2003-12-08', calendar: 'hijri' as const, hijri: { year: 1424, month: 10, day: 14 }, printed: '١٤٢٤/١٠/١٤' };
+    const dob = [at('DOB: 08/12/2003', 300, 373, 560)];
+    const confirmed = run(reading(hijri), null, dob);
+    expect(confirmed).toMatchObject({ value: '2003-12-08', confidence: 'high' });
+    expect(confirmed?.note).toBeUndefined();
+    // Same card if the Hijri date meant 12 August: the swapped order is taken.
+    expect(run(reading({ ...hijri, iso: '2003-08-12' }), null, dob)).toMatchObject({ value: '2003-08-12', confidence: 'high' });
+    // An uncertain Hijri reading confirms nothing: the ambiguity stays flagged.
+    expect(run(reading({ ...hijri, confident: false }), null, dob)).toMatchObject({ value: '2003-12-08', confidence: 'low' });
+  });
+
+  it('prefers the digit reader over the OCR engine’s reading of Arabic-Indic digits', () => {
+    const c = run(reading(), null, [at('تاريخ الميلاد: ٢٠٠٠/٠٨/١١', 100, 200, 600)]);
+    expect(c).toMatchObject({ value: '2000-08-14', confidence: 'medium' });
+    expect(c?.alternatives?.some((a) => a.value === '2000-08-11')).toBe(true);
+  });
+
+  it('flags Hijri readings with the converted date', () => {
+    const c = run(reading({ iso: '1990-05-12', calendar: 'hijri', hijri: { year: 1410, month: 10, day: 17 }, printed: '١٤١٠/١٠/١٧' }), iqamaId);
+    expect(c).toMatchObject({ value: '1990-05-12', confidence: 'medium' });
+    expect(c?.note).toContain('1410');
   });
 });

@@ -20,7 +20,8 @@ For each sample, record per field: **correct / wrong / missing**, and whether a 
 | Arabic name (alternative or primary) | Note the accuracy rate; every name was reviewable and editable |
 | Saudi ID / Iqama number | Correct (source «مقروء من الباركود» when the barcode is in the photo), or flagged when it fails the check digit |
 | Iqama: employer ID and place of birth | Never used as the holder's number or nationality |
-| Hijri birth date | Converted date matches the Gregorian date on the document (or is within 1 day and flagged) |
+| Birth date in Arabic-Indic digits (Iqama `٢٠٠٠/٠٨/١٤`) | Correct, or empty with a suggestion; the picture under the field shows the printed date. Record how often it is filled, and never accept a wrong date that is not flagged |
+| Hijri birth date (national ID `١٤١٠/١٠/١٧`) | Shown in Hijri as printed; the converted date matches (or is within 1 day) and is flagged |
 | Day/month ambiguity | Ambiguous dates (e.g. 05/06/1990) are flagged |
 | Nationality | Correct or empty; conflicts are flagged |
 | Gender | Filled from the document when stated; on Saudi IDs suggested from the name with «مقترح من الاسم» and flagged; otherwise empty |
@@ -86,7 +87,7 @@ Test on the devices staff will use (currently Android phones with Chrome). Add a
 | M2 | «التقاط بالكاميرا» on a phone | Opens the native camera; the photo is used |
 | M3 | «التقاط بالكاميرا» on a desktop with a webcam | Live preview dialog; capture works; the camera light turns off after closing |
 | M4 | Portrait photo of a landscape card | Rotate buttons fix the orientation |
-| M5 | Date picker | Usable; the Arabic Gregorian and Hijri readout is correct |
+| M5 | Birth date typed with the number keyboard (`14082000`, `20000814`, Arabic digits), Gregorian and Hijri | Slashes added automatically; invalid or incomplete dates are reported; the Arabic Gregorian and Hijri readout is correct |
 | M6 | Nationality and calling code typed with the phone keyboard | Arabic (with or without ال, adjective or country name) and English both match; Arabic-Indic digits are accepted in the calling code and number |
 
 ## 6. Accessibility

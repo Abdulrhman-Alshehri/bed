@@ -4,6 +4,7 @@ import { chooseMrz, extractFields, mrzLikeLines, shouldRunArabicPass } from '../
 import type { ExtractionResult } from '../extraction/result';
 import { readBarcodeTexts } from './barcodes';
 import { cropRegion, cropToCard, orient, prepareForOcr, releaseCanvas, unionBox, type Rotation } from './preprocess';
+import { readPrintedDigits } from './printedDigits';
 import type { PipelineProgress, PipelineStage } from './stages';
 import type { OcrEngine, OcrPage, OcrProgress } from './types';
 
@@ -50,11 +51,22 @@ export async function runExtraction(
     }
 
     onProgress({ stage: 'analyzing', progress: 0.97 });
+    // Arabic-Indic digits next to Arabic labels (birth date, ID number), read by the digit reader.
+    let printed: ReturnType<typeof readPrintedDigits> | null = null;
+    try {
+      printed = arabic && !mrz ? readPrintedDigits(canvas, arabic) : null;
+    } catch {
+      // The digit reader only adds evidence: the other fields are still extracted without it.
+    }
     // Development builds only (removed from production): raw OCR output for tuning the rules.
-    if (import.meta.env.DEV) Object.assign(window, { __ocrDebug: { latin, mrz: mrzPage, arabic } });
-    const result = extractFields({ latin, mrz: mrzPage, arabic, barcodes });
+    if (import.meta.env.DEV) Object.assign(window, { __ocrDebug: { latin, mrz: mrzPage, arabic, printed } });
+    const result = extractFields({ latin, mrz: mrzPage, arabic, barcodes, printedDigits: printed });
+    if (printed?.birthImage) result.evidence = { birthDate: printed.birthImage };
     if (Math.max(bitmap.width, bitmap.height) < 1000) result.warnings.unshift(MESSAGES.lowResolution);
-    if (result.stats.mrz !== 'valid' && result.stats.meanConfidence < 55) result.warnings.unshift(MESSAGES.lowConfidence);
+    // A decoded barcode or a valid MRZ shows the image is sharp, whatever the OCR's mean confidence
+    // (which drops on screenshots with phone interface around the card).
+    const sharp = result.stats.mrz === 'valid' || result.fields.docNumber?.source === 'barcode';
+    if (!sharp && result.stats.meanConfidence < 55) result.warnings.unshift(MESSAGES.lowConfidence);
     onProgress({ stage: 'analyzing', progress: 1 });
     return result;
   } finally {

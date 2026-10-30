@@ -15,7 +15,10 @@ export interface Candidate {
 }
 
 export interface ExtractionResult {
+  /** A candidate with an empty value carries only suggestions (an uncertain reading). */
   fields: Partial<Record<ExtractableKey, Candidate>>;
+  /** Pictures of parts of the document for staff to compare with (PNG data URLs). Never exported. */
+  evidence?: { birthDate?: string };
   /** Arabic warnings about the document as a whole. */
   warnings: string[];
   stats: {

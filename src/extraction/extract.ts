@@ -2,14 +2,16 @@
 //   1. MRZ with verified check digits (passports, GCC ID cards) and ID numbers read from barcodes.
 //   2. Saudi ID / Iqama numbers that pass the Luhn check, and the citizen/resident prefix rule.
 //   3. Values printed next to labels («الاسم», «Nationality», «تاريخ الميلاد», ...), paired by
-//      position on the card (see layout.ts).
+//      position on the card (see layout.ts). Arabic-Indic dates come from the dedicated digit
+//      reader (ocr/digitReader.ts), because the OCR engine misreads those small digits.
 //   4. Unlabeled heuristics and suggestions (always flagged for review).
 // Nothing is invented: a field without evidence is left out of the result.
 import { ARABIC_NAME_NATIONALITIES, OCR_CONFIDENCE_THRESHOLD } from '../config/rules';
 import { countryFromMrzCode, countryName } from '../data/countries';
 import type { DocType, Gender, Suggestion } from '../domain/types';
+import type { DigitDate } from '../ocr/digitReader';
 import type { OcrLine, OcrPage } from '../ocr/types';
-import { ageOn, findDates, formatHijriArabic, todayIso, type FoundDate } from './dates';
+import { ageOn, findDates, formatHijriArabic, toIsoDate, todayIso, type FoundDate } from './dates';
 import { findLabels, foldSameLength, hasAnyLabel } from './fieldLabels';
 import { genderFromArabicName } from './genderFromName';
 import { buildLayout, cellsOf, labelFor, valuesForLabel, type Cell, type Layout } from './layout';
@@ -28,6 +30,8 @@ export interface ExtractionInput {
   arabic?: OcrPage | null;
   /** Texts decoded from barcodes/QR codes on the document. */
   barcodes?: string[];
+  /** Arabic-Indic digits read next to their labels by the digit reader. */
+  printedDigits?: { birth: DigitDate | null; idNumber: string | null } | null;
   now?: Date;
 }
 
@@ -592,9 +596,74 @@ function decideVisualBirthDate(entries: DatedEntry[], now: Date): BirthDecision 
   return { candidate: null, labeled: true, warnings };
 }
 
-function decideBirthDate(mrz: MrzResult | null, visual: BirthDecision): Candidate | null {
+/**
+ * Arabic-Indic birth dates (Saudi IDs and Iqamas) read by the digit reader. A date the OCR read in
+ * Latin digits stays, with a confident digit reading as a second opinion. Otherwise a confident
+ * reading fills the field; an uncertain one is only offered as a suggestion, so staff must compare
+ * it with the document before using it.
+ */
+function withPrintedBirthDate(
+  visual: BirthDecision,
+  printed: ExtractionInput['printedDigits'],
+  docNumber: Candidate | null,
+  textDate: FoundDate | null,
+): BirthDecision {
+  const r = printed?.birth;
+  if (!r) return visual;
   const viz = visual.candidate;
-  if (!mrz?.birthDate) return viz;
+  const reading: Suggestion = { value: r.iso, display: r.iso, reason: `قراءة الأرقام المطبوعة (${r.printed})` };
+  // The OCR engine reads Latin digits well but Arabic-Indic ones poorly. An unlabeled date (the
+  // oldest one on the card) never outweighs a reading next to the label.
+  const textIsReliable = visual.labeled && !!textDate && !textDate.arabicIndic && !textDate.reconstructed;
+  if (viz && textDate && textIsReliable) {
+    if (!r.confident) return visual;
+    // National IDs print the date twice (Gregorian in Latin digits, Hijri in Arabic-Indic): when
+    // both agree, the date is confirmed, and an ambiguous day/month order is settled. Hijri
+    // conversion can differ by one day.
+    const agrees = (iso: string) => daysBetween(iso, r.iso) <= (r.calendar === 'hijri' ? 1 : 0);
+    const [y, m, d] = viz.value.split('-').map(Number) as [number, number, number];
+    const swapped = textDate.ambiguous ? toIsoDate(y, d, m) : null;
+    if (!viz.conflict && agrees(viz.value)) return { ...visual, candidate: { value: viz.value, confidence: 'high', source: 'ocr' } };
+    if (!viz.conflict && swapped && agrees(swapped)) return { ...visual, candidate: { value: swapped, confidence: 'high', source: 'ocr' } };
+    return { ...visual, candidate: { ...viz, alternatives: [...(viz.alternatives ?? []), reading] } };
+  }
+  const alternatives: Suggestion[] = [
+    ...(viz?.value ? [{ value: viz.value, display: viz.value, reason: 'قراءة أخرى غير مؤكدة' }] : []),
+    // Far less likely readings are only worth showing when the reading itself is uncertain.
+    ...(r.confident ? [] : r.alternatives.slice(0, 2).map((v) => ({ value: v, display: v, reason: 'قراءة محتملة أخرى' }))),
+  ];
+  if (r.confident) {
+    // The same reader read the ID number correctly on this photo: strong evidence it reads this font.
+    const verified = !!printed?.idNumber && printed.idNumber === docNumber?.value;
+    const note =
+      r.calendar === 'hijri' && r.hijri
+        ? `تم التحويل من التاريخ الهجري المطبوع (${formatHijriArabic(r.hijri)}) وفق تقويم أم القرى. تحقق منه`
+        : verified
+          ? undefined
+          : `قُرئ التاريخ المطبوع ${r.printed}. طابقه مع صورة التاريخ من المستند`;
+    return {
+      ...visual,
+      labeled: true,
+      candidate: { value: r.iso, confidence: note ? 'medium' : 'high', source: 'ocr', note, alternatives },
+    };
+  }
+  return {
+    ...visual,
+    labeled: true,
+    candidate: {
+      value: '',
+      confidence: 'low',
+      source: 'ocr',
+      note: `قراءة غير مؤكدة لتاريخ الميلاد المطبوع (${r.printed}). طابقها مع صورة التاريخ ثم اضغط «استخدام»، أو أدخل التاريخ يدويًا`,
+      alternatives: [reading, ...alternatives],
+    },
+  };
+}
+
+function decideBirthDate(mrz: MrzResult | null, visual: BirthDecision): Candidate | null {
+  // A suggestion-only reading (no value) is not compared with the MRZ.
+  const viz = visual.candidate?.value ? visual.candidate : null;
+  if (!mrz?.birthDate) return visual.candidate;
   const mrzDate = mrz.birthDate;
   if (mrz.checks.birthDate) {
     if (viz && visual.labeled && !viz.conflict && viz.value !== mrzDate) {
@@ -720,8 +789,12 @@ export function extractFields(input: ExtractionInput): ExtractionResult {
   const nationality = decideNationality(mrz, docNumber, layouts);
   const names = decideName(mrz, mrzReliable, latin, arabic);
   const fullName = names.candidate;
-  const visualBirth = decideVisualBirthDate(collectDates(layouts, now), now);
-  warnings.push(...visualBirth.warnings);
+  const dates = collectDates(layouts, now);
+  const textBirth = decideVisualBirthDate(dates, now);
+  warnings.push(...textBirth.warnings);
+  const textDate = dates.find((e) => e.date.iso === textBirth.candidate?.value)?.date ?? null;
+  // The MRZ's birth date has a check digit; the digit reader is for cards without one.
+  const visualBirth = mrz ? textBirth : withPrintedBirthDate(textBirth, input.printedDigits, docNumber, textDate);
   const birthDate = decideBirthDate(mrz, visualBirth);
   const gender = decideGender(mrz, mrzReliable, allCells, names.arabic);
 

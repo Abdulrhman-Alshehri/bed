@@ -177,7 +177,7 @@ function applyExtraction(state: FormState, result: ExtractionResult): FormState 
       if (candidate && candidate.value !== current) {
         s.meta[field].suggestions = uniqueSuggestions(
           [
-            { value: candidate.value, display: displayValue(field, candidate.value), reason: 'قيمة مستخرجة من المستند' },
+            ...(candidate.value ? [{ value: candidate.value, display: displayValue(field, candidate.value), reason: 'قيمة مستخرجة من المستند' }] : []),
             ...(candidate.alternatives ?? []),
           ],
           current,
@@ -187,9 +187,10 @@ function applyExtraction(state: FormState, result: ExtractionResult): FormState 
       continue;
     }
     if (candidate) {
+      // A candidate without a value is an uncertain reading offered only as a suggestion.
       setValue(s, field, candidate.value);
       s.meta[field] = {
-        source: candidate.source,
+        source: candidate.value ? candidate.source : 'empty',
         flag: flagFor(candidate),
         suggestions: uniqueSuggestions(candidate.alternatives ?? [], candidate.value),
       };

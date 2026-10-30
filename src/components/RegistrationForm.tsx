@@ -24,6 +24,8 @@ interface Props {
   /** Fields whose validation messages are visible. */
   visibleFields: ReadonlySet<FieldKey>;
   onFieldBlur: (field: FieldKey) => void;
+  /** Pictures from the document for comparison (birth date as printed). */
+  evidence?: { birthDate?: string };
 }
 
 const DOC_TYPE_OPTIONS = optionsFrom(DOC_TYPE_LABELS);
@@ -32,7 +34,7 @@ const VISIT_TYPE_OPTIONS = optionsFrom(VISIT_TYPE_LABELS);
 const LUGGAGE_CENTER_OPTIONS = optionsFrom(LUGGAGE_CENTER_LABELS);
 const GENDER_OPTIONS = optionsFrom(GENDER_LABELS);
 
-export function RegistrationForm({ state, dispatch, issues, visibleFields, onFieldBlur }: Props) {
+export function RegistrationForm({ state, dispatch, issues, visibleFields, onFieldBlur, evidence }: Props) {
   const v = state.values;
   const edit = (field: EditableField) => (value: string) => dispatch({ type: 'edit', field, value });
 
@@ -132,7 +134,14 @@ export function RegistrationForm({ state, dispatch, issues, visibleFields, onFie
       )),
     birthDate: () =>
       shell('birthDate', !!v.birthDate, (aria) => (
-        <BirthDateField id={inputId('birthDate')} value={v.birthDate} onChange={edit('birthDate')} aria={aria} />
+        <BirthDateField
+          id={inputId('birthDate')}
+          value={v.birthDate}
+          onChange={edit('birthDate')}
+          defaultCalendar={v.docType === 'national_id' ? 'hijri' : 'gregorian'}
+          evidence={evidence?.birthDate}
+          aria={aria}
+        />
       )),
     phone: () =>
       shell('phone', !!v.phoneNumber, (aria) => (
