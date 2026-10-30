@@ -12,8 +12,9 @@ import { FIELD_ORDER, type FieldKey, type FormState } from '../domain/types';
 import type { Issue } from '../domain/validation';
 import { normalizeDocNumber } from '../extraction/text';
 import { BirthDateField } from './BirthDateField';
+import { ChoiceGroup, optionsFrom } from './ChoiceGroup';
 import { FieldShell, inputId } from './FieldShell';
-import { NationalityCombobox } from './NationalityCombobox';
+import { NationalityInput } from './NationalityInput';
 import { PhoneField } from './PhoneField';
 
 interface Props {
@@ -25,18 +26,22 @@ interface Props {
   onFieldBlur: (field: FieldKey) => void;
 }
 
-const options = (labels: Record<string, string>) =>
-  Object.entries(labels).map(([value, label]) => (
-    <option key={value} value={value}>
-      {label}
-    </option>
-  ));
+const DOC_TYPE_OPTIONS = optionsFrom(DOC_TYPE_LABELS);
+const VISITOR_TYPE_OPTIONS = optionsFrom(VISITOR_TYPE_LABELS);
+const VISIT_TYPE_OPTIONS = optionsFrom(VISIT_TYPE_LABELS);
+const LUGGAGE_CENTER_OPTIONS = optionsFrom(LUGGAGE_CENTER_LABELS);
+const GENDER_OPTIONS = optionsFrom(GENDER_LABELS);
 
 export function RegistrationForm({ state, dispatch, issues, visibleFields, onFieldBlur }: Props) {
   const v = state.values;
   const edit = (field: EditableField) => (value: string) => dispatch({ type: 'edit', field, value });
 
-  const shell = (field: FieldKey, hasValue: boolean, render: Parameters<typeof FieldShell>[0]['children'], extra?: { hint?: string; wide?: boolean }) => (
+  const shell = (
+    field: FieldKey,
+    hasValue: boolean,
+    render: Parameters<typeof FieldShell>[0]['children'],
+    extra?: { hint?: string; wide?: boolean; group?: boolean },
+  ) => (
     <FieldShell
       key={field}
       field={field}
@@ -46,6 +51,7 @@ export function RegistrationForm({ state, dispatch, issues, visibleFields, onFie
       hasValue={hasValue}
       hint={extra?.hint}
       wide={extra?.wide}
+      group={extra?.group}
       onApplySuggestion={(index) => dispatch({ type: 'applySuggestion', field, index })}
       onDismissSuggestion={(index) => dispatch({ type: 'dismissSuggestion', field, index })}
       onAcknowledge={() => dispatch({ type: 'acknowledgeFlag', field })}
@@ -55,14 +61,25 @@ export function RegistrationForm({ state, dispatch, issues, visibleFields, onFie
     </FieldShell>
   );
 
+  const choice = <T extends string>(field: EditableField, options: readonly { value: T; label: string }[], hint?: string) =>
+    shell(
+      field,
+      !!(v as unknown as Record<string, string>)[field],
+      (aria) => (
+        <ChoiceGroup
+          id={inputId(field)}
+          name={field}
+          options={options}
+          value={(v as unknown as Record<string, T | ''>)[field] ?? ''}
+          onChange={edit(field)}
+          aria={aria}
+        />
+      ),
+      { group: true, wide: true, hint },
+    );
+
   const fields: Record<FieldKey, () => ReactElement> = {
-    docType: () =>
-      shell('docType', !!v.docType, (aria) => (
-        <select id={inputId('docType')} value={v.docType} onChange={(e) => edit('docType')(e.target.value)} {...aria}>
-          <option value="">اختر نوع الهوية</option>
-          {options(DOC_TYPE_LABELS)}
-        </select>
-      )),
+    docType: () => choice('docType', DOC_TYPE_OPTIONS),
     fullName: () =>
       shell(
         'fullName',
@@ -101,27 +118,17 @@ export function RegistrationForm({ state, dispatch, issues, visibleFields, onFie
         ),
         { hint: 'تُحفظ الأصفار في بداية الرقم كما هي' },
       ),
-    visitorType: () =>
-      shell(
-        'visitorType',
-        !!v.visitorType,
-        (aria) => (
-          <select id={inputId('visitorType')} value={v.visitorType} onChange={(e) => edit('visitorType')(e.target.value)} {...aria}>
-            <option value="">يُحدَّد حسب الجنسية</option>
-            {options(VISITOR_TYPE_LABELS)}
-          </select>
-        ),
-        { hint: 'خليجي لمواطني دول مجلس التعاون، ودولي لغيرهم' },
-      ),
-    visitType: () =>
-      shell('visitType', !!v.visitType, (aria) => (
-        <select id={inputId('visitType')} value={v.visitType} onChange={(e) => edit('visitType')(e.target.value)} {...aria}>
-          {options(VISIT_TYPE_LABELS)}
-        </select>
-      )),
+    visitorType: () => choice('visitorType', VISITOR_TYPE_OPTIONS, 'يُحدَّد تلقائيًا من الجنسية: خليجي لمواطني دول مجلس التعاون، ودولي لغيرهم'),
+    visitType: () => choice('visitType', VISIT_TYPE_OPTIONS),
     nationality: () =>
-      shell('nationality', !!v.nationality, (aria) => (
-        <NationalityCombobox id={inputId('nationality')} value={v.nationality} onChange={edit('nationality')} aria={aria} />
+      shell('nationality', !!v.nationalityText, (aria) => (
+        <NationalityInput
+          id={inputId('nationality')}
+          text={v.nationalityText}
+          code={v.nationality}
+          onChange={(text) => dispatch({ type: 'editNationalityText', text })}
+          aria={aria}
+        />
       )),
     birthDate: () =>
       shell('birthDate', !!v.birthDate, (aria) => (
@@ -131,28 +138,15 @@ export function RegistrationForm({ state, dispatch, issues, visibleFields, onFie
       shell('phone', !!v.phoneNumber, (aria) => (
         <PhoneField
           id={inputId('phone')}
-          country={v.phoneCountry}
+          dialCode={v.phoneDialCode}
           number={v.phoneNumber}
-          nationality={v.nationality}
-          docType={v.docType}
-          onCountryChange={(country) => dispatch({ type: 'editPhone', country })}
+          onDialCodeChange={(dialCode) => dispatch({ type: 'editPhone', dialCode })}
           onNumberChange={(number) => dispatch({ type: 'editPhone', number })}
           aria={aria}
         />
       )),
-    luggageCenter: () =>
-      shell('luggageCenter', !!v.luggageCenter, (aria) => (
-        <select id={inputId('luggageCenter')} value={v.luggageCenter} onChange={(e) => edit('luggageCenter')(e.target.value)} {...aria}>
-          {options(LUGGAGE_CENTER_LABELS)}
-        </select>
-      )),
-    gender: () =>
-      shell('gender', !!v.gender, (aria) => (
-        <select id={inputId('gender')} value={v.gender} onChange={(e) => edit('gender')(e.target.value)} {...aria}>
-          <option value="">غير محدد</option>
-          {options(GENDER_LABELS)}
-        </select>
-      )),
+    luggageCenter: () => choice('luggageCenter', LUGGAGE_CENTER_OPTIONS),
+    gender: () => choice('gender', GENDER_OPTIONS),
   };
 
   return (

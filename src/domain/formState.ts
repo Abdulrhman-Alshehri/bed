@@ -1,14 +1,35 @@
 // Form state and business rules. Pure functions: no DOM, no storage, no network.
-import { DEFAULT_LUGGAGE_CENTER, DEFAULT_PHONE_COUNTRY, DEFAULT_VISIT_TYPE } from '../config/rules';
+import { DEFAULT_LUGGAGE_CENTER, DEFAULT_VISIT_TYPE } from '../config/rules';
+import { countryName } from '../data/countries';
+import { findNationalityFuzzy, findNationalityInText } from '../extraction/nationality';
 import type { Candidate, ExtractionResult } from '../extraction/result';
-import { classifyVisitor, suggestCallingCountry } from './classification';
+import { classifyVisitor, DEFAULT_DIAL_CODE, suggestDialCode } from './classification';
 import { displayValue } from './display';
 import { FIELD_LABELS, MESSAGES, VISITOR_TYPE_LABELS } from './labels';
-import type { ExtractableKey, FieldKey, FieldMeta, Flag, FormState, FormValues, Suggestion, ValueSource } from './types';
+import { countriesForDialCode } from './phone';
+import {
+  LUGGAGE_KINDS,
+  type ExtractableKey,
+  type FieldKey,
+  type FieldMeta,
+  type Flag,
+  type FormState,
+  type FormValues,
+  type LuggageKind,
+  type LuggageSize,
+  type Suggestion,
+  type ValueSource,
+} from './types';
 
 const EXTRACTABLE: ExtractableKey[] = ['docType', 'fullName', 'docNumber', 'nationality', 'birthDate', 'gender'];
+const MAX_PIECES_PER_KIND = 20;
 
 const meta = (source: ValueSource = 'empty'): FieldMeta => ({ source, flag: null, suggestions: [] });
+
+/** ISO code of the country a typed nationality refers to («مصري», «SUDAN», «افغاتستان»), or ''. */
+export function nationalityFromText(text: string): string {
+  return (findNationalityInText(text) ?? findNationalityFuzzy(text))?.code ?? '';
+}
 
 export function createInitialState(): FormState {
   return {
@@ -19,11 +40,14 @@ export function createInitialState(): FormState {
       visitorType: '',
       visitType: DEFAULT_VISIT_TYPE,
       nationality: '',
+      nationalityText: '',
       birthDate: '',
-      phoneCountry: DEFAULT_PHONE_COUNTRY,
+      phoneDialCode: DEFAULT_DIAL_CODE,
       phoneNumber: '',
       luggageCenter: DEFAULT_LUGGAGE_CENTER,
       gender: '',
+      luggage: Object.fromEntries(LUGGAGE_KINDS.map((k) => [k, 0])) as Record<LuggageKind, number>,
+      luggageSize: '',
     },
     meta: {
       docType: meta(),
@@ -37,18 +61,22 @@ export function createInitialState(): FormState {
       luggageCenter: meta('default'),
       gender: meta(),
     },
-    phoneCountrySource: 'default',
+    phoneCodeSource: 'default',
     extracted: false,
     confirmed: false,
     notices: [],
   };
 }
 
+/** Fields edited through the generic 'edit' action (stored as a single string). */
 export type EditableField = Exclude<FieldKey, 'phone'>;
 
 export type FormAction =
   | { type: 'edit'; field: EditableField; value: string }
-  | { type: 'editPhone'; country?: string; number?: string }
+  | { type: 'editNationalityText'; text: string }
+  | { type: 'editPhone'; dialCode?: string; number?: string }
+  | { type: 'setLuggageCount'; kind: LuggageKind; count: number }
+  | { type: 'setLuggageSize'; size: LuggageSize }
   | { type: 'applyExtraction'; result: ExtractionResult }
   | { type: 'applySuggestion'; field: FieldKey; index: number }
   | { type: 'dismissSuggestion'; field: FieldKey; index: number }
@@ -61,15 +89,20 @@ function clone(state: FormState): FormState {
   for (const [k, m] of Object.entries(state.meta)) {
     metaCopy[k as FieldKey] = { ...m, suggestions: [...m.suggestions] };
   }
-  return { ...state, values: { ...state.values }, meta: metaCopy, notices: [] };
+  return { ...state, values: { ...state.values, luggage: { ...state.values.luggage } }, meta: metaCopy, notices: [] };
 }
 
 function setValue(s: FormState, field: EditableField, value: string) {
-  (s.values as unknown as Record<EditableField, string>)[field] = value;
+  if (field === 'nationality') {
+    s.values.nationality = value;
+    s.values.nationalityText = countryName(value);
+    return;
+  }
+  (s.values as unknown as Record<string, string>)[field] = value;
 }
 
 function getValue(s: FormState, field: EditableField): string {
-  return (s.values as unknown as Record<EditableField, string>)[field];
+  return (s.values as unknown as Record<string, string>)[field] ?? '';
 }
 
 /** Any edit invalidates a previous confirmation (export requires confirming the current data). */
@@ -84,9 +117,11 @@ function uniqueSuggestions(list: Suggestion[], current: string): Suggestion[] {
   return list.filter((s) => (seen.has(s.value) ? false : (seen.add(s.value), true)));
 }
 
+const dialDisplay = (dial: string) => `+${dial}${countriesForDialCode(dial)[0] ? ` (${countriesForDialCode(dial)[0]})` : ''}`;
+
 /**
  * BR-05 / BR-13: visitor type follows nationality unless the user overrode it; the calling code
- * follows nationality (and document type) unless the user chose one or already typed a number.
+ * follows nationality (and document type) unless the user typed one or already typed a number.
  * Rule results that are not applied are offered as suggestions instead.
  */
 function applyDerivedRules(s: FormState) {
@@ -97,21 +132,20 @@ function applyDerivedRules(s: FormState) {
   } else {
     s.meta.visitorType.suggestions =
       rule && rule !== s.values.visitorType
-        ? [{ value: rule, display: VISITOR_TYPE_LABELS[rule], reason: 'حسب قاعدة التصنيف للجنسية المختارة' }]
+        ? [{ value: rule, display: VISITOR_TYPE_LABELS[rule], reason: 'حسب قاعدة التصنيف للجنسية المكتوبة' }]
         : [];
   }
 
-  const { selected } = suggestCallingCountry(s.values.nationality, s.values.docType);
-  const codeIsFree = s.phoneCountrySource !== 'user' && s.values.phoneNumber === '';
+  const { selected, alternative } = suggestDialCode(s.values.nationality, s.values.docType);
+  const codeIsFree = s.phoneCodeSource !== 'user' && s.values.phoneNumber === '';
+  const offer = (dial: string, reason: string): Suggestion => ({ value: dial, display: dialDisplay(dial), reason });
   if (codeIsFree) {
-    s.values.phoneCountry = selected;
-    s.phoneCountrySource = s.values.nationality ? 'rule' : 'default';
-    s.meta.phone.suggestions = [];
+    s.values.phoneDialCode = selected;
+    s.phoneCodeSource = s.values.nationality ? 'rule' : 'default';
+    // Residents keep +966, but their nationality's code is one tap away.
+    s.meta.phone.suggestions = alternative ? [offer(alternative, 'رمز دولة الجنسية')] : [];
   } else {
-    s.meta.phone.suggestions =
-      selected !== s.values.phoneCountry
-        ? [{ value: selected, display: displayValue('phone', selected), reason: 'رمز الدولة المقترح حسب الجنسية' }]
-        : [];
+    s.meta.phone.suggestions = selected !== s.values.phoneDialCode ? [offer(selected, 'رمز الدولة المقترح حسب الجنسية')] : [];
   }
 }
 
@@ -126,7 +160,7 @@ function missingFlag(field: ExtractableKey): Flag {
     level: 'review',
     message:
       field === 'gender'
-        ? 'لم يُذكر الجنس بوضوح في المستند. اختره يدويًا فقط إذا كان معروفًا'
+        ? 'لم يُذكر الجنس في المستند ولم يمكن اقتراحه من الاسم. اختره يدويًا'
         : 'لم يتم استخراج هذه المعلومة من المستند. يرجى إدخالها يدويًا',
   };
 }
@@ -137,8 +171,9 @@ function applyExtraction(state: FormState, result: ExtractionResult): FormState 
   for (const field of EXTRACTABLE) {
     const candidate = result.fields[field];
     const current = getValue(s, field);
+    const userValue = field === 'nationality' ? s.values.nationalityText : current;
     // BR-14: never overwrite a value the user typed; offer the new reading as a suggestion.
-    if (s.meta[field].source === 'user' && current !== '') {
+    if (s.meta[field].source === 'user' && userValue !== '') {
       if (candidate && candidate.value !== current) {
         s.meta[field].suggestions = uniqueSuggestions(
           [
@@ -184,12 +219,24 @@ export function formReducer(state: FormState, action: FormAction): FormState {
       if (action.field === 'nationality' || action.field === 'docType') applyDerivedRules(s);
       return afterEdit(s, state);
     }
+    case 'editNationalityText': {
+      const s = clone(state);
+      s.values.nationalityText = action.text;
+      s.values.nationality = nationalityFromText(action.text);
+      s.meta.nationality = {
+        source: action.text ? 'user' : 'empty',
+        flag: null,
+        suggestions: s.meta.nationality.suggestions.filter((x) => x.value !== s.values.nationality),
+      };
+      applyDerivedRules(s);
+      return afterEdit(s, state);
+    }
     case 'editPhone': {
       const s = clone(state);
-      if (action.country !== undefined) {
-        s.values.phoneCountry = action.country;
-        s.phoneCountrySource = 'user';
-        s.meta.phone.suggestions = s.meta.phone.suggestions.filter((x) => x.value !== action.country);
+      if (action.dialCode !== undefined) {
+        s.values.phoneDialCode = action.dialCode;
+        s.phoneCodeSource = 'user';
+        s.meta.phone.suggestions = s.meta.phone.suggestions.filter((x) => x.value !== action.dialCode);
       }
       if (action.number !== undefined) {
         s.values.phoneNumber = action.number;
@@ -198,12 +245,22 @@ export function formReducer(state: FormState, action: FormAction): FormState {
       s.meta.phone.flag = null;
       return afterEdit(s, state);
     }
+    case 'setLuggageCount': {
+      const s = clone(state);
+      s.values.luggage[action.kind] = Math.max(0, Math.min(MAX_PIECES_PER_KIND, Math.round(action.count)));
+      return afterEdit(s, state);
+    }
+    case 'setLuggageSize': {
+      const s = clone(state);
+      s.values.luggageSize = action.size;
+      return afterEdit(s, state);
+    }
     case 'applyExtraction':
       return applyExtraction(state, action.result);
     case 'applySuggestion': {
       const suggestion = state.meta[action.field].suggestions[action.index];
       if (!suggestion) return state;
-      if (action.field === 'phone') return formReducer(state, { type: 'editPhone', country: suggestion.value });
+      if (action.field === 'phone') return formReducer(state, { type: 'editPhone', dialCode: suggestion.value });
       const previous = getValue(state, action.field);
       const next = formReducer(state, { type: 'edit', field: action.field, value: suggestion.value });
       // Keep the replaced value one click away (e.g. to switch back between Arabic and Latin names).
@@ -238,7 +295,20 @@ export function formReducer(state: FormState, action: FormAction): FormState {
   }
 }
 
+export function totalPieces(values: FormValues): number {
+  return LUGGAGE_KINDS.reduce((sum, k) => sum + values.luggage[k], 0);
+}
+
 /** True when nothing beyond the defaults has been entered or extracted. */
 export function isFormEmpty(values: FormValues): boolean {
-  return !values.docType && !values.fullName && !values.docNumber && !values.nationality && !values.birthDate && !values.phoneNumber && !values.gender;
+  return (
+    !values.docType &&
+    !values.fullName &&
+    !values.docNumber &&
+    !values.nationalityText &&
+    !values.birthDate &&
+    !values.phoneNumber &&
+    !values.gender &&
+    totalPieces(values) === 0
+  );
 }

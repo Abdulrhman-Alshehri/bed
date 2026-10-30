@@ -48,7 +48,7 @@ export const PASSPORT = {
     birthDate: '1990-01-15',
     gender: 'male',
     visitorType: 'international',
-    phoneCountry: 'EG',
+    phoneDialCode: '20',
   },
   html: (() => {
     const mrz = td3({ surname: 'ALTEST', given: 'MOHAMMED AHMED', nationality: 'EGY', number: 'A12345678', birth: '900115', sex: 'M', expiry: '300501' });
@@ -81,7 +81,7 @@ export const IQAMA = {
     birthDate: '1985-11-03',
     gender: 'female',
     visitorType: 'international',
-    phoneCountry: 'SA',
+    phoneDialCode: '966',
   },
   html: page(
     `<div class="specimen">SPECIMEN</div>
@@ -110,7 +110,7 @@ export const NATIONAL_ID = {
     // Not printed on the card: suggested from the name «سعد» and flagged for review.
     gender: 'male',
     visitorType: 'gcc',
-    phoneCountry: 'SA',
+    phoneDialCode: '966',
   },
   html: page(
     `<div class="specimen">SPECIMEN</div>

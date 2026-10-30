@@ -10,15 +10,18 @@ const values: FormValues = {
   docNumber: '012345678',
   visitorType: 'international',
   nationality: 'EG',
+  nationalityText: 'مصري',
   birthDate: '1990-01-15',
-  phoneCountry: 'EG',
+  phoneDialCode: '20',
   phoneNumber: '01001234567',
   gender: 'male',
+  luggage: { backpack: 1, suitcase: 2, bag: 0, stroller: 0, wheelchair: 0, other: 0 },
+  luggageSize: 'M+',
 };
 
 describe('buildExportCells', () => {
-  it('produces the ten columns in BRD order with Arabic values', () => {
-    const cells = buildExportCells(values);
+  it('produces the ten BRD columns in order, then the luggage columns', () => {
+    const cells = buildExportCells(values).slice(0, 10);
     expect(cells.map((c) => c.header)).toEqual([
       'نوع الهوية',
       'الاسم الثلاثي',
@@ -43,6 +46,18 @@ describe('buildExportCells', () => {
       'المدينة',
       'ذكر',
     ]);
+  });
+
+  it('appends pieces per luggage type, the total and the size', () => {
+    const luggage = buildExportCells(values).slice(10);
+    expect(luggage.map((c) => `${c.header}=${c.value}`)).toEqual([
+      'حقيبة ظهر=1', 'حقيبة سفر=2', 'كيس=0', 'عربة أطفال=0', 'كرسي متحرك=0', 'أخرى=0', 'إجمالي القطع=3', 'حجم الأمتعة=متوسط+ (M+)',
+    ]);
+  });
+
+  it('exports the typed nationality when it matches no country', () => {
+    const cells = buildExportCells({ ...values, nationality: '', nationalityText: 'Atlantis' });
+    expect(cells.find((c) => c.field === 'nationality')?.value).toBe('Atlantis');
   });
 
   it('exports an empty gender as an empty cell', () => {
@@ -76,7 +91,10 @@ describe('toCsv', () => {
 
 describe('toClipboardText and file name', () => {
   it('formats label: value lines', () => {
-    expect(toClipboardText(buildExportCells(values)).split('\n')[0]).toBe('نوع الهوية: جواز سفر');
+    const text = toClipboardText(buildExportCells(values));
+    expect(text.split('\n')[0]).toBe('نوع الهوية: جواز سفر');
+    expect(text).toContain('حقيبة سفر: 2');
+    expect(text).not.toContain('كيس: 0');
   });
 
   it('does not put personal data in the file name', () => {
