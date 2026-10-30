@@ -1,19 +1,23 @@
 // Turns OCR output into per-field candidates. Rules, in order of reliability:
-//   1. MRZ with verified check digits (passports, GCC ID cards).
+//   1. MRZ with verified check digits (passports, GCC ID cards) and ID numbers read from barcodes.
 //   2. Saudi ID / Iqama numbers that pass the Luhn check, and the citizen/resident prefix rule.
-//   3. Values found next to printed labels ("الاسم", "Nationality", "تاريخ الميلاد", ...).
-//   4. Unlabeled heuristics (always low confidence).
+//   3. Values printed next to labels («الاسم», «Nationality», «تاريخ الميلاد», ...), paired by
+//      position on the card (see layout.ts).
+//   4. Unlabeled heuristics and suggestions (always flagged for review).
 // Nothing is invented: a field without evidence is left out of the result.
 import { ARABIC_NAME_NATIONALITIES, OCR_CONFIDENCE_THRESHOLD } from '../config/rules';
 import { countryFromMrzCode, countryName } from '../data/countries';
 import type { DocType, Gender, Suggestion } from '../domain/types';
 import type { OcrLine, OcrPage } from '../ocr/types';
 import { ageOn, findDates, formatHijriArabic, todayIso, type FoundDate } from './dates';
+import { findLabels, foldSameLength, hasAnyLabel } from './fieldLabels';
+import { genderFromArabicName } from './genderFromName';
+import { buildLayout, cellsOf, labelFor, valuesForLabel, type Cell, type Layout } from './layout';
 import { cleanMrzLine, findMrz, looksLikeMrzLine, passedCheckCount, type MrzResult } from './mrz';
-import { findNationalityInText } from './nationality';
+import { findNationalityFuzzy, findNationalityInText } from './nationality';
 import type { Candidate, Confidence, ExtractionResult } from './result';
 import { findSaudiIdNumbers, isValidSaudiIdNumber, type SaudiIdCandidate } from './saudiId';
-import { cleanSpaces, countArabicLetters, countLatinLetters, foldArabic, normalizeDigits } from './text';
+import { cleanSpaces, countArabicLetters, countLatinLetters, editDistance, foldArabic, normalizeDigits } from './text';
 
 export interface ExtractionInput {
   /** English OCR pass over the whole document. */
@@ -22,107 +26,9 @@ export interface ExtractionInput {
   mrz?: OcrPage | null;
   /** Arabic OCR pass over the whole document, if one was run. */
   arabic?: OcrPage | null;
+  /** Texts decoded from barcodes/QR codes on the document. */
+  barcodes?: string[];
   now?: Date;
-}
-
-// ---------------------------------------------------------------------------------------------
-// Labels
-
-/** Folding that keeps the string length, so label positions map back to the original text. */
-function foldSameLength(s: string): string {
-  return normalizeDigits(s).toLowerCase().replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
-}
-
-const LABELS = {
-  name: ['الاسم', 'name'],
-  nationality: ['الجنسية', 'nationality', 'nationalite'],
-  birth: ['تاريخ الميلاد', 'الميلاد', 'تاريخ الولادة', 'date of birth', 'birth date', 'birthdate', 'birth', 'dob', 'd.o.b'],
-  otherDate: ['الانتهاء', 'انتهاء', 'الإصدار', 'إصدار', 'expiry', 'expiration', 'expires', 'issue', 'issued', 'valid'],
-  sex: ['الجنس', 'sex', 'gender'],
-  docNumber: [
-    'رقم الهوية', 'رقم الإقامة', 'السجل المدني', 'رقم السجل', 'رقم الجواز', 'رقم جواز', 'رقم البطاقة', 'الرقم المدني',
-    'id no', 'id number', 'id. no', 'identity no', 'identity number', 'iqama no', 'iqama number', 'passport no',
-    'passport number', 'document no', 'document number', 'civil id', 'civil no', 'card no',
-  ],
-};
-const PARENT_NAME_LABELS = ['اسم الاب', 'اسم الام', "father", "mother", 'employer', 'sponsor', 'صاحب العمل', 'الكفيل'];
-const ALL_LABELS = Object.values(LABELS).flat();
-
-interface LabelHit {
-  start: number;
-  end: number;
-}
-
-function findLabels(text: string, labels: readonly string[]): LabelHit[] {
-  const t = foldSameLength(text);
-  const hits: LabelHit[] = [];
-  for (const raw of labels) {
-    const label = foldSameLength(raw);
-    const latinLabel = /[a-z]$/.test(label);
-    let from = 0;
-    for (let idx = t.indexOf(label, from); idx !== -1; idx = t.indexOf(label, from)) {
-      const before = t[idx - 1] ?? ' ';
-      const after = t[idx + label.length] ?? ' ';
-      const boundaryBefore = !/[a-zء-ي]/.test(before);
-      const boundaryAfter = !latinLabel || !/[a-z]/.test(after);
-      if (boundaryBefore && boundaryAfter) hits.push({ start: idx, end: idx + label.length });
-      from = idx + 1;
-    }
-  }
-  return hits.sort((a, b) => a.start - b.start);
-}
-
-const hasAnyLabel = (text: string) => findLabels(text, ALL_LABELS).length > 0;
-
-interface LabeledValue<T> {
-  value: T;
-  confidence: number;
-}
-
-/**
- * Looks for `labels` in each line and passes the text after the label (up to the next label) to
- * `accept`. When the label stands alone, the following line is tried instead. Returns every
- * accepted value in reading order (one per label occurrence).
- */
-function valuesAfterLabel<T>(
-  lines: OcrLine[],
-  labels: readonly string[],
-  accept: (segment: string) => T | null,
-  excludeLabels: readonly string[] = [],
-): LabeledValue<T>[] {
-  const found: LabeledValue<T>[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const hits = findLabels(line.text, labels);
-    if (hits.length === 0) continue;
-    if (excludeLabels.length && findLabels(line.text, excludeLabels).length) continue;
-    const allHits = findLabels(line.text, ALL_LABELS);
-    let accepted = false;
-    for (const hit of hits) {
-      const nextHit = allHits.find((h) => h.start >= hit.end);
-      const segment = line.text.slice(hit.end, nextHit?.start ?? line.text.length).replace(/^[\s:：\-–|/.]+/, '');
-      const value = accept(segment);
-      if (value !== null) {
-        found.push({ value, confidence: line.confidence });
-        accepted = true;
-      }
-    }
-    const next = lines[i + 1];
-    if (!accepted && next && !hasAnyLabel(next.text)) {
-      const value = accept(next.text);
-      if (value !== null) found.push({ value, confidence: next.confidence });
-    }
-  }
-  return found;
-}
-
-function valueAfterLabel<T>(
-  lines: OcrLine[],
-  labels: readonly string[],
-  accept: (segment: string) => T | null,
-  excludeLabels: readonly string[] = [],
-): LabeledValue<T> | null {
-  return valuesAfterLabel(lines, labels, accept, excludeLabels)[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -133,7 +39,7 @@ const LATIN_STOPWORDS = new Set(
     'PASSPORT PASSEPORT REPUBLIC STATE STATES DATE BIRTH EXPIRY EXPIRATION ISSUE ISSUING PLACE NATIONALITY SEX NAME ' +
     'NAMES SURNAME GIVEN NO NUMBER OCCUPATION PROFESSION EMPLOYER SPONSOR RELIGION TYPE CODE AUTHORITY SIGNATURE ' +
     'HOLDER GOVERNMENT VERSION VALID UNTIL OF THE MALE FEMALE UNITED EMIRATES KUWAIT QATAR BAHRAIN OMAN SULTANATE ' +
-    'CIVIL PERSONAL DOCUMENT COUNTRY ADDRESS BLOOD GROUP HEIGHT NOM PRENOMS').split(' '),
+    'CIVIL PERSONAL DOCUMENT COUNTRY ADDRESS BLOOD GROUP HEIGHT NOM PRENOMS SPECIMEN').split(' '),
 );
 
 const ARABIC_STOPWORDS = new Set(
@@ -143,6 +49,9 @@ const ARABIC_STOPWORDS = new Set(
     'الديانة', 'الأحوال', 'المدنية', 'جواز', 'سفر', 'الجوازات', 'المديرية', 'العامة', 'للجوازات', 'دولة', 'جمهورية',
     'الاسم', 'الجنس', 'ذكر', 'أنثى', 'النسخة', 'السجل', 'المدني', 'حامل', 'البطاقة', 'توقيع', 'الإمارات', 'المتحدة',
     'الكويت', 'سلطنة', 'عمان', 'قطر', 'البحرين', 'مملكة', 'الحدود', 'صادرة', 'من', 'إلى', 'صالحة', 'الكفيل', 'الجواز',
+    // Verification note printed next to the QR code on Saudi cards.
+    'يجب', 'التحقق', 'الرمز', 'السريع', 'قبل', 'اعتماد', 'التعامل', 'مع',
+    'شركة', 'مؤسسة', 'للتجارة', 'المحدودة', 'منطقة', 'جوازات', 'الاسلام', 'الإسلام',
   ].map(foldArabic),
 );
 
@@ -160,33 +69,102 @@ function acceptArabicName(segment: string): string | null {
     .split(' ')
     .filter((w) => w.length >= 2);
   if (words.length < 2 || words.length > 8) return null;
-  if (words.some((w) => ARABIC_STOPWORDS.has(foldArabic(w)))) return null;
+  if (words.some(isCardWord)) return null;
   return words.join(' ');
 }
 
-/** Best line that looks like a name when no "Name" label was found. */
-function bestUnlabeledName(lines: OcrLine[], script: 'arabic' | 'latin'): LabeledValue<string> | null {
-  let best: LabeledValue<string> | null = null;
-  for (const line of lines) {
-    const text = line.text.trim();
-    if (line.confidence < 60 || hasAnyLabel(text) || /\d/.test(normalizeDigits(text))) continue;
-    const letters = text.replace(/\s/g, '').length || 1;
-    if (script === 'arabic') {
-      if (countArabicLetters(text) / letters < 0.85) continue;
-    } else if (!/^[A-Z' -]+$/.test(text) || countLatinLetters(text) / letters < 0.85) {
-      continue;
-    }
-    if (findNationalityInText(text)?.exact) continue; // a country name, e.g. "REPUBLIC OF INDIA"
-    const value = script === 'arabic' ? acceptArabicName(text) : acceptLatinName(text);
-    if (value && (!best || line.confidence > best.confidence)) best = { value, confidence: line.confidence };
+/** A word printed on the card itself, possibly misread by one letter («زارة» for «وزارة»). */
+function isCardWord(word: string): boolean {
+  const folded = foldArabic(word);
+  if (ARABIC_STOPWORDS.has(folded)) return true;
+  if (folded.length < 4) return false;
+  for (const stop of ARABIC_STOPWORDS) {
+    if (stop.length >= 4 && Math.abs(stop.length - folded.length) <= 1 && editDistance(stop, folded) <= 1) return true;
+  }
+  return false;
+}
+
+interface NameReading {
+  value: string;
+  confidence: number;
+  cell: Cell;
+  /** Found next to a «الاسم»/«Name» label, or right above the English name. */
+  anchored: boolean;
+}
+
+function looksLikeName(cell: Cell, script: 'arabic' | 'latin'): string | null {
+  const text = cell.text.trim();
+  if (cell.confidence < 60 || hasAnyLabel(text) || /\d/.test(normalizeDigits(text))) return null;
+  const letters = text.replace(/[\s-]/g, '').length || 1;
+  if (script === 'arabic') {
+    if (countArabicLetters(text) / letters < 0.85) return null;
+  } else if (!/^[A-Z' -]+$/.test(text) || countLatinLetters(text) / letters < 0.85) {
+    return null;
+  }
+  if (findNationalityInText(text)?.exact) return null; // a country name, e.g. "REPUBLIC OF INDIA"
+  return script === 'arabic' ? acceptArabicName(text) : acceptLatinName(text);
+}
+
+/** Cells that are not the value of another printed field (occupation, employer, place of birth...). */
+function freeCells(layout: Layout | null): Cell[] {
+  if (!layout) return [];
+  return layout.rows.flatMap((row, r) => row.cells.filter((_, c) => labelFor(layout, r, c, 0) === null));
+}
+
+/** Best cell that looks like a name when no «Name» label was found. */
+function bestUnlabeledName(layout: Layout | null, script: 'arabic' | 'latin'): NameReading | null {
+  let best: NameReading | null = null;
+  for (const cell of freeCells(layout)) {
+    const value = looksLikeName(cell, script);
+    if (value && (!best || cell.confidence > best.confidence)) best = { value, confidence: cell.confidence, cell, anchored: false };
   }
   return best;
 }
 
-function decideName(mrz: MrzResult | null, mrzReliable: boolean, latin: OcrLine[], arabic: OcrLine[]): Candidate | null {
-  const arabicLabeled = valueAfterLabel(arabic, LABELS.name, acceptArabicName, PARENT_NAME_LABELS);
-  const arabicName = arabicLabeled ?? bestUnlabeledName(arabic, 'arabic');
-  const latinLabeled = valueAfterLabel(latin, LABELS.name, acceptLatinName, PARENT_NAME_LABELS);
+/**
+ * Saudi IDs and residence permits print the Arabic name directly above the English name, without a
+ * label. Finds the Arabic cell right above the given English name cell.
+ */
+function arabicNameAbove(arabic: Layout | null, latinCell: Cell): NameReading | null {
+  if (!arabic) return null;
+  const h = latinCell.bbox.y1 - latinCell.bbox.y0;
+  let best: NameReading | null = null;
+  for (const cell of freeCells(arabic)) {
+    const above = cell.bbox.y1 <= latinCell.bbox.y0 + h / 2 && latinCell.bbox.y0 - cell.bbox.y1 < h * 2.5;
+    const overlaps = cell.bbox.x0 < latinCell.bbox.x1 && latinCell.bbox.x0 < cell.bbox.x1;
+    if (!above || !overlaps) continue;
+    const value = looksLikeName(cell, 'arabic');
+    if (value && (!best || cell.bbox.y1 > best.cell.bbox.y1)) best = { value, confidence: cell.confidence, cell, anchored: true };
+  }
+  return best;
+}
+
+interface NameDecision {
+  candidate: Candidate | null;
+  /** The Arabic name reading, if any, and whether it was anchored to a label or the English name. */
+  arabic: { value: string; anchored: boolean } | null;
+}
+
+function decideName(mrz: MrzResult | null, mrzReliable: boolean, latin: Layout, arabic: Layout | null): NameDecision {
+  const result = decideNameCandidate(mrz, mrzReliable, latin, arabic);
+  return { candidate: result.candidate, arabic: result.arabicName ? { value: result.arabicName.value, anchored: result.arabicName.anchored } : null };
+}
+
+function decideNameCandidate(
+  mrz: MrzResult | null,
+  mrzReliable: boolean,
+  latin: Layout,
+  arabic: Layout | null,
+): { candidate: Candidate | null; arabicName: NameReading | null } {
+  const labeled = (layout: Layout | null, accept: (s: string) => string | null): NameReading | null => {
+    const hit = layout ? valuesForLabel([layout], 'name', accept)[0] : undefined;
+    return hit ? { ...hit, anchored: true } : null;
+  };
+  const latinName = labeled(latin, acceptLatinName) ?? bestUnlabeledName(latin, 'latin');
+  const arabicName =
+    labeled(arabic, acceptArabicName) ??
+    (latinName ? arabicNameAbove(arabic, latinName.cell) : null) ??
+    bestUnlabeledName(arabic, 'arabic');
 
   if (mrz && (mrz.surname || mrz.givenNames)) {
     const alternatives: Suggestion[] = arabicName
@@ -200,28 +178,30 @@ function decideName(mrz: MrzResult | null, mrzReliable: boolean, latin: OcrLine[
     } else if (!mrzReliable) {
       note = 'تحقق من الاسم مقارنة بالمستند';
     }
-    return { value: cleanSpaces(`${mrz.givenNames} ${mrz.surname}`), confidence, source: 'mrz', note, alternatives };
+    return {
+      candidate: { value: cleanSpaces(`${mrz.givenNames} ${mrz.surname}`), confidence, source: 'mrz', note, alternatives },
+      arabicName,
+    };
   }
 
-  const latinName = latinLabeled ?? bestUnlabeledName(latin, 'latin');
   const options = [
-    arabicName && { ...arabicName, labeled: !!arabicLabeled, reason: 'الاسم بالعربية كما قُرئ من المستند' },
-    latinName && { ...latinName, labeled: !!latinLabeled, reason: 'الاسم بالإنجليزية كما قُرئ من المستند' },
+    arabicName && { ...arabicName, reason: 'الاسم بالعربية كما قُرئ من المستند' },
+    latinName && { ...latinName, reason: 'الاسم بالإنجليزية كما قُرئ من المستند' },
   ].filter((o): o is NonNullable<typeof o> => !!o);
-  if (options.length === 0) return null;
-  // Labeled readings first; Arabic first among equally reliable readings (Arabic-first interface).
-  const rank = (o: (typeof options)[number]) =>
-    (o.labeled ? 2 : 0) + (o.confidence >= OCR_CONFIDENCE_THRESHOLD ? 1 : 0);
+  if (options.length === 0) return { candidate: null, arabicName };
+  // Anchored readings first; Arabic first among equally reliable readings (Arabic-first interface).
+  const rank = (o: (typeof options)[number]) => (o.anchored ? 2 : 0) + (o.confidence >= OCR_CONFIDENCE_THRESHOLD ? 1 : 0);
   options.sort((a, b) => rank(b) - rank(a));
   const [primary, ...rest] = options as [(typeof options)[number], ...typeof options];
   return {
-    value: primary.value,
-    confidence: primary.labeled && primary.confidence >= OCR_CONFIDENCE_THRESHOLD ? 'medium' : 'low',
-    source: 'ocr',
-    note: primary.labeled
-      ? 'تحقق من الاسم مقارنة بالمستند'
-      : 'لم يُعثر على عنوان "الاسم"؛ تم اختيار السطر الأرجح. تحقق منه',
-    alternatives: rest.map((o) => ({ value: o.value, display: o.value, reason: o.reason })),
+    candidate: {
+      value: primary.value,
+      confidence: primary.anchored && primary.confidence >= OCR_CONFIDENCE_THRESHOLD ? 'medium' : 'low',
+      source: 'ocr',
+      note: primary.anchored ? 'تحقق من الاسم مقارنة بالمستند' : 'لم يُعثر على عنوان "الاسم"؛ تم اختيار السطر الأرجح. تحقق منه',
+      alternatives: rest.map((o) => ({ value: o.value, display: o.value, reason: o.reason })),
+    },
+    arabicName,
   };
 }
 
@@ -291,11 +271,35 @@ function acceptDocNumber(segment: string): string | null {
   return tokens.find((t) => (t.match(/\d/g)?.length ?? 0) >= 4) ?? null;
 }
 
+/** Saudi ID numbers on the card, excluding numbers printed next to employer/sponsor labels. */
+function holderIdNumbers(layouts: Layout[]): SaudiIdCandidate[] {
+  const found = new Map<string, SaudiIdCandidate>();
+  for (const layout of layouts) {
+    layout.rows.forEach((row, r) => {
+      row.cells.forEach((cell, c) => {
+        for (const id of findSaudiIdNumbers(cell.text)) {
+          const position = normalizeDigits(cell.text).replace(/ (?=\d)/g, '').indexOf(id.value);
+          if (labelFor(layout, r, c, Math.max(0, position)) === 'employer') continue;
+          if (!found.has(id.value)) found.set(id.value, id);
+        }
+      });
+    });
+  }
+  return [...found.values()];
+}
+
+/** Saudi ID numbers encoded in barcodes (the Code 128 barcode on Saudi cards holds the ID number). */
+function barcodeIdNumbers(barcodes: string[]): string[] {
+  const ids = barcodes.flatMap((text) => findSaudiIdNumbers(text)).filter((c) => c.valid).map((c) => c.value);
+  return [...new Set(ids)];
+}
+
 function decideDocNumber(
   mrz: MrzResult | null,
+  barcodeIds: string[],
   saudiIds: SaudiIdCandidate[],
   docType: DocType | null,
-  lines: OcrLine[],
+  layouts: Layout[],
 ): Candidate | null {
   if (mrz && mrz.documentNumber) {
     // ID cards (TD1/TD2) often carry the holder's personal ID number (e.g. 784... in the UAE) in the
@@ -319,6 +323,17 @@ function decideDocNumber(
     };
   }
 
+  if (barcodeIds.length === 1) {
+    const value = barcodeIds[0]!;
+    const printed = saudiIds.filter((s) => s.valid && s.value !== value);
+    return {
+      value,
+      confidence: 'high',
+      source: 'barcode',
+      alternatives: printed.map((s) => ({ value: s.value, display: s.value, reason: 'رقم آخر مطبوع على المستند' })),
+    };
+  }
+
   const valid = saudiIds.filter((s) => s.valid);
   if (valid.length) {
     let pool = valid;
@@ -338,7 +353,7 @@ function decideDocNumber(
     };
   }
 
-  const labeled = valueAfterLabel(lines, LABELS.docNumber, acceptDocNumber);
+  const labeled = valuesForLabel(layouts, 'docNumber', acceptDocNumber)[0];
   if (labeled && !saudiIds.some((s) => s.value === labeled.value)) {
     return {
       value: labeled.value,
@@ -364,7 +379,7 @@ function decideDocNumber(
 // ---------------------------------------------------------------------------------------------
 // Nationality
 
-function decideNationality(mrz: MrzResult | null, docNumber: Candidate | null, lines: OcrLine[]): Candidate | null {
+function decideNationality(mrz: MrzResult | null, docNumber: Candidate | null, layouts: Layout[]): Candidate | null {
   const readings: { code: string; source: Candidate['source']; confidence: Confidence; reason: string }[] = [];
   const mrzCode = mrz ? countryFromMrzCode(mrz.nationality) : null;
   if (mrzCode) readings.push({ code: mrzCode, source: 'mrz', confidence: 'high', reason: 'من منطقة MRZ' });
@@ -374,7 +389,8 @@ function decideNationality(mrz: MrzResult | null, docNumber: Candidate | null, l
     readings.push({ code: 'SA', source: 'rule', confidence: 'high', reason: 'رقم الهوية الوطنية السعودية يبدأ بالرقم 1' });
   }
 
-  for (const labeled of valuesAfterLabel(lines, LABELS.nationality, (s) => findNationalityInText(s)?.code ?? null)) {
+  const nationalityOf = (s: string) => (findNationalityInText(s) ?? findNationalityFuzzy(s))?.code ?? null;
+  for (const labeled of valuesForLabel(layouts, 'nationality', nationalityOf)) {
     readings.push({ code: labeled.value, source: 'ocr', confidence: 'medium', reason: 'من النص المطبوع على المستند' });
   }
 
@@ -420,33 +436,24 @@ interface DatedEntry {
   lineConfidence: number;
 }
 
-function collectDates(lines: OcrLine[], now: Date): DatedEntry[] {
+function collectDates(layouts: Layout[], now: Date): DatedEntry[] {
   const out: DatedEntry[] = [];
-  lines.forEach((line, i) => {
-    const dates = findDates(line.text, now);
-    if (dates.length === 0) return;
-    const birthHits = findLabels(line.text, LABELS.birth);
-    const otherHits = findLabels(line.text, LABELS.otherDate);
-    for (const date of dates) {
-      const lastBefore = (hits: LabelHit[]) => Math.max(-1, ...hits.filter((h) => h.end <= date.index).map((h) => h.end));
-      const birthPos = lastBefore(birthHits);
-      const otherPos = lastBefore(otherHits);
-      let kind: DatedEntry['kind'] = 'unknown';
-      if (birthPos >= 0 || otherPos >= 0) kind = birthPos > otherPos ? 'birth' : 'other';
-      else if (birthHits.length && !otherHits.length) kind = 'birth';
-      else if (otherHits.length && !birthHits.length) kind = 'other';
-      else {
-        const prev = lines[i - 1];
-        if (prev && findDates(prev.text, now).length === 0) {
-          const prevBirth = findLabels(prev.text, LABELS.birth).length > 0;
-          const prevOther = findLabels(prev.text, LABELS.otherDate).length > 0;
-          if (prevBirth && !prevOther) kind = 'birth';
-          else if (prevOther && !prevBirth) kind = 'other';
+  for (const layout of layouts) {
+    layout.rows.forEach((row, r) => {
+      row.cells.forEach((cell, c) => {
+        for (const date of findDates(cell.text, now)) {
+          let group = labelFor(layout, r, c, date.index);
+          if (!group) {
+            // A label printed after the value in the same cell («12/05/1990 تاريخ الميلاد»).
+            const groups = new Set(findLabels(cell.text).map((h) => h.group));
+            if (groups.size === 1) group = [...groups][0]!;
+          }
+          const kind: DatedEntry['kind'] = group === 'birth' ? 'birth' : group ? 'other' : 'unknown';
+          out.push({ date, kind, lineConfidence: cell.confidence });
         }
-      }
-      out.push({ date, kind, lineConfidence: line.confidence });
-    }
-  });
+      });
+    });
+  }
   return out;
 }
 
@@ -530,6 +537,18 @@ function decideVisualBirthDate(entries: DatedEntry[], now: Date): BirthDecision 
         warnings,
       };
     }
+    if (entry.date.reconstructed) {
+      return {
+        candidate: {
+          value,
+          confidence: 'low',
+          source: 'ocr',
+          note: `قُرئ التاريخ ناقص الأصفار (${entry.date.raw}) فأُكمل حسب صيغة التاريخ. طابقه مع المستند`,
+        },
+        labeled: true,
+        warnings,
+      };
+    }
     if (entry.date.ambiguous) {
       return {
         candidate: {
@@ -603,14 +622,14 @@ function decideBirthDate(mrz: MrzResult | null, visual: BirthDecision): Candidat
 // ---------------------------------------------------------------------------------------------
 // Gender
 
-function gendersFromText(lines: OcrLine[]): Set<Gender> {
+function gendersFromText(cells: Cell[]): Set<Gender> {
   const found = new Set<Gender>();
-  for (const line of lines) {
-    const folded = foldSameLength(line.text);
+  for (const cell of cells) {
+    const folded = foldSameLength(cell.text);
     const tokens = folded.split(/[^a-zء-ي]+/).filter(Boolean);
     if (tokens.includes('ذكر') || tokens.includes('male')) found.add('male');
     if (tokens.includes('انثي') || tokens.includes('female')) found.add('female');
-    for (const hit of findLabels(line.text, LABELS.sex)) {
+    for (const hit of findLabels(cell.text, ['sex'])) {
       const next = folded.slice(hit.end).split(/[^a-zء-ي]+/).filter(Boolean)[0];
       if (next === 'm') found.add('male');
       if (next === 'f') found.add('female');
@@ -619,11 +638,15 @@ function gendersFromText(lines: OcrLine[]): Set<Gender> {
   return found;
 }
 
-function decideGender(mrz: MrzResult | null, mrzReliable: boolean, lines: OcrLine[]): Candidate | null {
-  const fromText = gendersFromText(lines);
+function decideGender(
+  mrz: MrzResult | null,
+  mrzReliable: boolean,
+  cells: Cell[],
+  arabicName: { value: string; anchored: boolean } | null,
+): Candidate | null {
+  const fromText = gendersFromText(cells);
   const fromMrz: Gender | null = mrz?.sex === 'M' ? 'male' : mrz?.sex === 'F' ? 'female' : null;
   const all = new Set<Gender>([...fromText, ...(fromMrz ? [fromMrz] : [])]);
-  if (all.size === 0) return null;
   if (all.size > 1) {
     return {
       value: fromMrz ?? [...fromText][0]!,
@@ -634,7 +657,18 @@ function decideGender(mrz: MrzResult | null, mrzReliable: boolean, lines: OcrLin
     };
   }
   if (fromMrz) return { value: fromMrz, confidence: mrzReliable || fromText.size ? 'high' : 'medium', source: 'mrz' };
-  return { value: [...fromText][0]!, confidence: 'medium', source: 'ocr', note: 'تحقق من الجنس مقارنة بالمستند' };
+  if (fromText.size) return { value: [...fromText][0]!, confidence: 'medium', source: 'ocr', note: 'تحقق من الجنس مقارنة بالمستند' };
+
+  // Not stated on the document (e.g. Saudi national ID): suggest from the Arabic name. The weak
+  // «ends with ة» rule is only used for a name anchored to its label or to the English name.
+  const guess = arabicName ? genderFromArabicName(arabicName.value, { endingRule: arabicName.anchored }) : null;
+  if (!guess) return null;
+  return {
+    value: guess.gender,
+    confidence: 'low',
+    source: 'rule',
+    note: `مقترح من الاسم (${guess.reason}) لأن المستند لا يذكر الجنس. تأكد منه`,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -665,77 +699,31 @@ export function shouldRunArabicPass(mrz: MrzResult | null): boolean {
   return ARABIC_NAME_NATIONALITIES.includes(countryFromMrzCode(mrz.nationality) ?? '');
 }
 
-/**
- * The Arabic model turns Latin text and background patterns next to Arabic text into garbage words
- * with very low confidence. Trims such words from the ends of each line.
- */
-function trimNoisyEdges(lines: OcrLine[], minConfidence = 40): OcrLine[] {
-  return lines.flatMap((line) => {
-    if (line.words.length === 0) return [line];
-    let start = 0;
-    let end = line.words.length;
-    while (start < end && line.words[start]!.confidence < minConfidence) start++;
-    while (end > start && line.words[end - 1]!.confidence < minConfidence) end--;
-    if (start === end) return [];
-    if (start === 0 && end === line.words.length) return [line];
-    const words = line.words.slice(start, end);
-    return [{ ...line, words, text: words.map((w) => w.text).join(' ') }];
-  });
-}
-
-/**
- * Splits OCR lines where consecutive words are far apart. Tesseract sometimes joins text from two
- * columns of a card into one line (e.g. an Arabic name on the right and an English field on the
- * left); word spacing is a fraction of the line height while column gaps are several times it.
- */
-function splitAtColumnGaps(lines: OcrLine[], gapFactor = 2.5): OcrLine[] {
-  return lines.flatMap((line) => {
-    if (line.words.length < 2) return [line];
-    const height = Math.max(1, line.bbox.y1 - line.bbox.y0);
-    const groups: OcrLine['words'][] = [[line.words[0]!]];
-    for (let i = 1; i < line.words.length; i++) {
-      const prev = line.words[i - 1]!.bbox;
-      const cur = line.words[i]!.bbox;
-      // Works for both reading directions (Arabic words run right to left).
-      const gap = Math.max(cur.x0 - prev.x1, prev.x0 - cur.x1);
-      if (gap > height * gapFactor) groups.push([line.words[i]!]);
-      else groups[groups.length - 1]!.push(line.words[i]!);
-    }
-    if (groups.length === 1) return [line];
-    return groups.map((words) => ({
-      text: words.map((w) => w.text).join(' '),
-      confidence: words.reduce((sum, w) => sum + w.confidence, 0) / words.length,
-      bbox: {
-        x0: Math.min(...words.map((w) => w.bbox.x0)),
-        y0: Math.min(...words.map((w) => w.bbox.y0)),
-        x1: Math.max(...words.map((w) => w.bbox.x1)),
-        y1: Math.max(...words.map((w) => w.bbox.y1)),
-      },
-      words,
-    }));
-  });
-}
-
 export function extractFields(input: ExtractionInput): ExtractionResult {
   const now = input.now ?? new Date();
-  const latin = splitAtColumnGaps(input.latin.lines);
-  const arabic = trimNoisyEdges(splitAtColumnGaps(input.arabic?.lines ?? []));
-  const all = [...latin, ...arabic];
-  const fullText = all.map((l) => l.text).join('\n');
+  const latin = buildLayout(input.latin.lines, 'ltr');
+  // The Arabic model turns Latin text and background patterns into low-confidence garbage words.
+  const arabic = input.arabic ? buildLayout(input.arabic.lines, 'rtl', { trimConfidence: 40 }) : null;
+  const layouts = arabic ? [latin, arabic] : [latin];
+  const allCells = layouts.flatMap(cellsOf);
+  const fullText = allCells.map((c) => c.text).join('\n');
   const warnings: string[] = [];
 
   const mrz = chooseMrz(input.latin, input.mrz, now);
   const mrzReliable = mrz ? isMrzReliable(mrz) : false;
-  const saudiIds = mrz ? [] : findSaudiIdNumbers(fullText);
+  const barcodeIds = mrz ? [] : barcodeIdNumbers(input.barcodes ?? []);
+  const saudiIds = mrz ? [] : holderIdNumbers(layouts);
+  const allIds = [...new Set([...barcodeIds, ...saudiIds.filter((s) => s.valid).map((s) => s.value)])].map((value) => ({ value, valid: true }));
 
-  const docType = decideDocType(mrz, mrzReliable, saudiIds, docTypeFromKeywords(foldSameLength(fullText)));
-  const docNumber = decideDocNumber(mrz, saudiIds, (docType?.value as DocType | undefined) ?? null, all);
-  const nationality = decideNationality(mrz, docNumber, all);
-  const fullName = decideName(mrz, mrzReliable, latin, arabic);
-  const visualBirth = decideVisualBirthDate(collectDates(all, now), now);
+  const docType = decideDocType(mrz, mrzReliable, allIds, docTypeFromKeywords(foldSameLength(fullText)));
+  const docNumber = decideDocNumber(mrz, barcodeIds, saudiIds, (docType?.value as DocType | undefined) ?? null, layouts);
+  const nationality = decideNationality(mrz, docNumber, layouts);
+  const names = decideName(mrz, mrzReliable, latin, arabic);
+  const fullName = names.candidate;
+  const visualBirth = decideVisualBirthDate(collectDates(layouts, now), now);
   warnings.push(...visualBirth.warnings);
   const birthDate = decideBirthDate(mrz, visualBirth);
-  const gender = decideGender(mrz, mrzReliable, all);
+  const gender = decideGender(mrz, mrzReliable, allCells, names.arabic);
 
   const meanConfidence = Math.max(input.latin.confidence, input.arabic?.confidence ?? 0);
   if (mrz && !mrzReliable) {

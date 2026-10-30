@@ -1,4 +1,4 @@
-import { countryName, getCountry } from '../data/countries';
+import { countryName } from '../data/countries';
 import {
   DOC_TYPE_LABELS,
   GENDER_LABELS,
@@ -6,17 +6,18 @@ import {
   VISIT_TYPE_LABELS,
   VISITOR_TYPE_LABELS,
 } from './labels';
+import { countriesForDialCode } from './phone';
 import type { FieldKey } from './types';
 
 const lookup = (table: Record<string, string>, value: string) => table[value] ?? value;
 
 /** "+966 (المملكة العربية السعودية)" */
-export function callingCodeLabel(country: string): string {
-  const c = getCountry(country);
-  return c?.dial ? `+${c.dial} (${c.ar})` : country;
+export function dialCodeLabel(dial: string): string {
+  const name = countriesForDialCode(dial)[0];
+  return name ? `+${dial} (${name})` : `+${dial}`;
 }
 
-/** Human-readable Arabic display of a stored field value. For 'phone' the value is a calling-code country. */
+/** Human-readable Arabic display of a stored field value. For 'phone' the value is a calling code. */
 export function displayValue(field: FieldKey, value: string): string {
   if (!value) return '';
   switch (field) {
@@ -33,7 +34,7 @@ export function displayValue(field: FieldKey, value: string): string {
     case 'nationality':
       return countryName(value) || value;
     case 'phone':
-      return callingCodeLabel(value);
+      return dialCodeLabel(value);
     default:
       return value;
   }

@@ -1,4 +1,4 @@
-import type { DocType, FieldKey, Gender, LuggageCenter, ValueSource, VisitType, VisitorType } from './types';
+import type { DocType, FieldKey, Gender, LuggageCenter, LuggageKind, LuggageSize, ValueSource, VisitType, VisitorType } from './types';
 
 export const FIELD_LABELS: Record<FieldKey, string> = {
   docType: 'نوع الهوية',
@@ -36,6 +36,23 @@ export const LUGGAGE_CENTER_LABELS: Record<LuggageCenter, string> = {
   madinah: 'المدينة',
 };
 
+export const LUGGAGE_KIND_LABELS: Record<LuggageKind, string> = {
+  backpack: 'حقيبة ظهر',
+  suitcase: 'حقيبة سفر',
+  bag: 'كيس',
+  stroller: 'عربة أطفال',
+  wheelchair: 'كرسي متحرك',
+  other: 'أخرى',
+};
+
+export const LUGGAGE_SIZE_LABELS: Record<LuggageSize, string> = {
+  S: 'صغير',
+  'S+': 'صغير+',
+  M: 'متوسط',
+  'M+': 'متوسط+',
+  L: 'كبير',
+};
+
 export const GENDER_LABELS: Record<Gender, string> = {
   male: 'ذكر',
   female: 'أنثى',
@@ -46,6 +63,7 @@ export const SOURCE_LABELS: Record<ValueSource, string> = {
   default: 'قيمة افتراضية',
   ocr: 'مستخرج من النص',
   mrz: 'مستخرج من MRZ',
+  barcode: 'مقروء من الباركود',
   rule: 'حسب القاعدة',
   user: 'معدّل يدويًا',
 };
@@ -60,7 +78,6 @@ export const MESSAGES = {
   cleared: 'تم مسح البيانات من النموذج',
   exported: 'تم تصدير البيانات إلى ملف CSV',
   confirmed: 'تم تأكيد البيانات. يمكنك الآن نسخها أو تصديرها',
-  confirmFirst: 'يرجى مراجعة البيانات وتأكيدها قبل النسخ أو التصدير',
   copyFailed: 'تعذر نسخ البيانات. يرجى المحاولة مرة أخرى',
   exportFailed: 'تعذر تصدير البيانات. يرجى المحاولة مرة أخرى',
   emptyForm: 'النموذج فارغ. يرجى رفع مستند أو إدخال البيانات أولًا',
@@ -74,5 +91,6 @@ export const MESSAGES = {
   editsKept: 'تم الإبقاء على القيم التي عدّلتها يدويًا في الحقول التالية، وعُرضت القيم المستخرجة الجديدة كاقتراحات:',
   confirmationReset: 'تم تعديل البيانات بعد تأكيدها، يرجى مراجعتها وتأكيدها مرة أخرى',
   resetConfirm: 'هل تريد مسح صورة المستند وجميع البيانات المدخلة؟',
+  newVisitorConfirm: 'بدء تسجيل زائر جديد؟ ستُمسح البيانات الحالية، فتأكد من نسخها أو تصديرها أولًا.',
   cameraUnavailable: 'تعذر الوصول إلى الكاميرا. تحقق من صلاحيات المتصفح أو استخدم رفع صورة',
 } as const;

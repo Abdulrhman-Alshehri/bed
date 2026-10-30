@@ -34,8 +34,11 @@ export interface RecognizeOptions {
   language: 'eng' | 'ara';
   /** Restrict recognized characters (used for the MRZ). */
   charWhitelist?: string;
-  /** 'auto' for full pages, 'block' for a single uniform block of text such as an MRZ. */
-  layout?: 'auto' | 'block';
+  /**
+   * 'auto' for full pages, 'sparse' for scattered text such as ID cards (finds as much text as
+   * possible, in no particular order), 'block' for one uniform block of text such as an MRZ.
+   */
+  layout?: 'auto' | 'sparse' | 'block';
 }
 
 export interface OcrProgress {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, formReducer, type FormAction } from './formState';
+import { createInitialState, formReducer, totalPieces, type FormAction } from './formState';
 import type { ExtractionResult } from '../extraction/result';
 import type { FormState } from './types';
 
@@ -15,9 +15,11 @@ describe('defaults', () => {
     const s = createInitialState();
     expect(s.values.visitType).toBe('prayer');
     expect(s.values.luggageCenter).toBe('madinah');
-    expect(s.values.phoneCountry).toBe('SA');
+    expect(s.values.phoneDialCode).toBe('966');
     expect(s.values.gender).toBe('');
     expect(s.values.visitorType).toBe('');
+    expect(s.values.luggageSize).toBe('');
+    expect(Object.values(s.values.luggage).every((n) => n === 0)).toBe(true);
   });
 });
 
@@ -40,12 +42,13 @@ describe('nationality rules', () => {
 
   it('selects the nationality calling code for passports (BR-09)', () => {
     const s = run({ type: 'edit', field: 'docType', value: 'passport' }, { type: 'edit', field: 'nationality', value: 'EG' });
-    expect(s.values.phoneCountry).toBe('EG');
+    expect(s.values.phoneDialCode).toBe('20');
   });
 
-  it('keeps +966 for residence permits (configurable)', () => {
+  it('keeps +966 for residence permits and offers the nationality code (configurable)', () => {
     const s = run({ type: 'edit', field: 'docType', value: 'residence' }, { type: 'edit', field: 'nationality', value: 'EG' });
-    expect(s.values.phoneCountry).toBe('SA');
+    expect(s.values.phoneDialCode).toBe('966');
+    expect(s.meta.phone.suggestions[0]?.value).toBe('20');
   });
 
   it('does not change the calling code once a number is entered; suggests instead (BR-13)', () => {
@@ -54,18 +57,48 @@ describe('nationality rules', () => {
       { type: 'editPhone', number: '501234567' },
       { type: 'edit', field: 'nationality', value: 'EG' },
     );
-    expect(s.values.phoneCountry).toBe('SA');
+    expect(s.values.phoneDialCode).toBe('966');
     expect(s.values.phoneNumber).toBe('501234567');
-    expect(s.meta.phone.suggestions[0]?.value).toBe('EG');
+    expect(s.meta.phone.suggestions[0]?.value).toBe('20');
   });
 
   it('does not change a calling code the user picked', () => {
     const s = run(
       { type: 'edit', field: 'docType', value: 'passport' },
-      { type: 'editPhone', country: 'PK' },
+      { type: 'editPhone', dialCode: '92' },
       { type: 'edit', field: 'nationality', value: 'EG' },
     );
-    expect(s.values.phoneCountry).toBe('PK');
+    expect(s.values.phoneDialCode).toBe('92');
+  });
+});
+
+describe('nationality typed as text', () => {
+  it('matches adjectives and English names to the country list', () => {
+    const s = run({ type: 'editNationalityText', text: 'سوداني' });
+    expect(s.values.nationality).toBe('SD');
+    expect(s.values.visitorType).toBe('international');
+    expect(run({ type: 'editNationalityText', text: 'KUWAITI' }).values.visitorType).toBe('gcc');
+  });
+
+  it('keeps unmatched text without inventing a country or visitor type', () => {
+    const s = run({ type: 'editNationalityText', text: 'xyz' });
+    expect(s.values.nationalityText).toBe('xyz');
+    expect(s.values.nationality).toBe('');
+    expect(s.values.visitorType).toBe('');
+  });
+});
+
+describe('luggage', () => {
+  it('counts pieces per type, clamped to 0..20', () => {
+    const s = run(
+      { type: 'setLuggageCount', kind: 'suitcase', count: 2 },
+      { type: 'setLuggageCount', kind: 'bag', count: -1 },
+      { type: 'setLuggageCount', kind: 'other', count: 99 },
+      { type: 'setLuggageSize', size: 'M+' },
+    );
+    expect(s.values.luggage).toMatchObject({ suitcase: 2, bag: 0, other: 20 });
+    expect(totalPieces(s.values)).toBe(22);
+    expect(s.values.luggageSize).toBe('M+');
   });
 });
 
@@ -82,7 +115,8 @@ describe('applying OCR results', () => {
     expect(s.meta.fullName.flag?.level).toBe('review');
     expect(s.meta.docType.flag).toBeNull();
     expect(s.values.visitorType).toBe('international');
-    expect(s.values.phoneCountry).toBe('EG');
+    expect(s.values.nationalityText).toBe('مصر');
+    expect(s.values.phoneDialCode).toBe('20');
     expect(s.values.gender).toBe('');
     expect(s.meta.gender.flag?.level).toBe('review');
     expect(s.meta.birthDate.flag?.message).toContain('لم يتم استخراج');

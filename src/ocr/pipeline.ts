@@ -2,7 +2,8 @@
 import { MESSAGES } from '../domain/labels';
 import { chooseMrz, extractFields, mrzLikeLines, shouldRunArabicPass } from '../extraction/extract';
 import type { ExtractionResult } from '../extraction/result';
-import { cropRegion, prepareForOcr, releaseCanvas, unionBox, type Rotation } from './preprocess';
+import { readBarcodeTexts } from './barcodes';
+import { cropRegion, cropToCard, orient, prepareForOcr, releaseCanvas, unionBox, type Rotation } from './preprocess';
 import type { PipelineProgress, PipelineStage } from './stages';
 import type { OcrEngine, OcrPage, OcrProgress } from './types';
 
@@ -18,9 +19,13 @@ export async function runExtraction(
     onProgress({ stage: p.stage === 'loading' ? 'loading' : stage, progress: from + (to - from) * (p.stage === 'loading' ? 0 : p.progress) });
 
   onProgress({ stage: 'preparing', progress: 0.02 });
-  const canvas = prepareForOcr(bitmap, rotation);
+  const oriented = orient(bitmap, rotation);
+  const card = cropToCard(oriented);
+  const canvas = prepareForOcr(card);
   let mrzCanvas: HTMLCanvasElement | null = null;
   try {
+    const barcodes = await readBarcodeTexts(card);
+    if (card !== oriented) releaseCanvas(oriented);
     const latin = await engine.recognize(canvas, { language: 'eng', layout: 'auto' }, report('latin', 0.05, 0.45));
 
     // Second pass over the MRZ only, restricted to MRZ characters. If the first pass did not spot
@@ -40,18 +45,21 @@ export async function runExtraction(
 
     let arabic: OcrPage | null = null;
     if (shouldRunArabicPass(mrz)) {
-      arabic = await engine.recognize(canvas, { language: 'ara', layout: 'auto' }, report('arabic', 0.55, 0.95));
+      // Sparse mode read Iqama fields better than page layout analysis in testing (16 vs 14 of 24).
+      arabic = await engine.recognize(canvas, { language: 'ara', layout: 'sparse' }, report('arabic', 0.55, 0.95));
     }
 
     onProgress({ stage: 'analyzing', progress: 0.97 });
     // Development builds only (removed from production): raw OCR output for tuning the rules.
     if (import.meta.env.DEV) Object.assign(window, { __ocrDebug: { latin, mrz: mrzPage, arabic } });
-    const result = extractFields({ latin, mrz: mrzPage, arabic });
+    const result = extractFields({ latin, mrz: mrzPage, arabic, barcodes });
     if (Math.max(bitmap.width, bitmap.height) < 1000) result.warnings.unshift(MESSAGES.lowResolution);
     if (result.stats.mrz !== 'valid' && result.stats.meanConfidence < 55) result.warnings.unshift(MESSAGES.lowConfidence);
     onProgress({ stage: 'analyzing', progress: 1 });
     return result;
   } finally {
+    releaseCanvas(oriented);
+    releaseCanvas(card);
     releaseCanvas(canvas);
     releaseCanvas(mrzCanvas);
   }

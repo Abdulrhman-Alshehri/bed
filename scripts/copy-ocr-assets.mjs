@@ -34,13 +34,17 @@ for (const lang of languages) {
   if (!existsSync(src)) throw new Error(`Missing language model: ${src}`);
   copyFileSync(src, join(out, 'lang', `${lang}.traineddata.gz`));
 }
+// Barcode reader (zxing-cpp compiled to WebAssembly), used for the ID number barcode on Saudi cards.
+copyFileSync(nm('zxing-wasm', 'dist', 'reader', 'zxing_reader.wasm'), join(out, 'zxing_reader.wasm'));
 copyFileSync(nm('tesseract.js', 'LICENSE.md'), join(out, 'licenses', 'tesseract.js-LICENSE.md'));
+copyFileSync(nm('zxing-wasm', 'LICENSE'), join(out, 'licenses', 'zxing-wasm-LICENSE'));
 copyFileSync(nm('tesseract.js-core', 'LICENSE'), join(out, 'licenses', 'tesseract.js-core-LICENSE'));
 
 const manifest = {
   tesseract: pkgVersion('tesseract.js'),
   core: pkgVersion('tesseract.js-core'),
   languages: Object.fromEntries(languages.map((l) => [l, pkgVersion(`@tesseract.js-data/${l}`)])),
+  zxing: pkgVersion('zxing-wasm'),
 };
 writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2));
 console.log('OCR assets copied to public/ocr', manifest);

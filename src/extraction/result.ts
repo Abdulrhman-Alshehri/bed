@@ -5,7 +5,7 @@ export type Confidence = 'high' | 'medium' | 'low';
 export interface Candidate {
   value: string;
   confidence: Confidence;
-  source: 'mrz' | 'ocr' | 'rule';
+  source: 'mrz' | 'barcode' | 'ocr' | 'rule';
   /** Arabic explanation shown next to the field when it needs review. */
   note?: string;
   /** The document contains contradicting values for this field. */

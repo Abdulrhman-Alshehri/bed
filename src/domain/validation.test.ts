@@ -10,13 +10,15 @@ describe('validateForm', () => {
   it('reports required fields as errors and recommended ones as warnings', () => {
     const issues = validateForm(createInitialState(), FIXED_NOW);
     expect(issues.filter((i) => i.severity === 'error').map((i) => i.field)).toEqual([
-      'docType', 'fullName', 'docNumber', 'visitorType', 'nationality', 'birthDate',
+      'luggage', 'luggageSize', 'docType', 'fullName', 'docNumber', 'visitorType', 'nationality', 'birthDate',
     ]);
     expect(issues.filter((i) => i.severity === 'warning').map((i) => i.field)).toEqual(['phone', 'gender']);
   });
 
   it('accepts a complete form', () => {
     const s = state(
+      { type: 'setLuggageCount', kind: 'suitcase', count: 1 },
+      { type: 'setLuggageSize', size: 'M' },
       { type: 'edit', field: 'docType', value: 'national_id' },
       { type: 'edit', field: 'fullName', value: 'سعد عبدالله التجربة' },
       { type: 'edit', field: 'docNumber', value: saudiId('105678901') },
@@ -26,6 +28,11 @@ describe('validateForm', () => {
       { type: 'edit', field: 'gender', value: 'male' },
     );
     expect(validateForm(s, FIXED_NOW)).toEqual([]);
+  });
+
+  it('warns when the typed nationality matches no country', () => {
+    const issues = validateForm(state({ type: 'editNationalityText', text: 'xyz' }), FIXED_NOW);
+    expect(issues.find((i) => i.field === 'nationality')).toMatchObject({ severity: 'warning' });
   });
 
   it('rejects future and implausible birth dates', () => {
@@ -74,16 +81,17 @@ describe('validateDocNumber', () => {
 
 describe('checkPhone', () => {
   it('validates Saudi mobiles with or without the trunk 0', () => {
-    expect(checkPhone('SA', '0501234567')).toMatchObject({ ok: true, e164: '+966501234567' });
-    expect(checkPhone('SA', '٥٠١٢٣٤٥٦٧')).toMatchObject({ ok: true, e164: '+966501234567' });
+    expect(checkPhone('966', '0501234567')).toMatchObject({ ok: true, e164: '+966501234567' });
+    expect(checkPhone('966', '٥٠١٢٣٤٥٦٧')).toMatchObject({ ok: true, e164: '+966501234567' });
   });
 
   it('rejects numbers that do not fit the selected country', () => {
-    expect(checkPhone('SA', '12345').ok).toBe(false);
-    expect(checkPhone('SA', '+201001234567').ok).toBe(false);
+    expect(checkPhone('966', '12345').ok).toBe(false);
+    expect(checkPhone('966', '+201001234567').ok).toBe(false);
+    expect(checkPhone('999', '501234567')).toMatchObject({ ok: false, message: 'رمز الدولة غير صحيح' });
   });
 
   it('warns about landlines', () => {
-    expect(checkPhone('SA', '0112345678')).toMatchObject({ ok: true, fixedLine: true });
+    expect(checkPhone('966', '0112345678')).toMatchObject({ ok: true, fixedLine: true });
   });
 });

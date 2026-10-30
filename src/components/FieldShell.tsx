@@ -14,6 +14,8 @@ interface Props {
   hasValue: boolean;
   hint?: ReactNode;
   wide?: boolean;
+  /** A group of choice buttons: rendered as <fieldset> with a <legend> instead of a <label>. */
+  group?: boolean;
   onApplySuggestion: (index: number) => void;
   onDismissSuggestion: (index: number) => void;
   onAcknowledge: () => void;
@@ -23,7 +25,7 @@ interface Props {
 
 /** Label, value-source badge, OCR review flag, suggestions and validation messages around an input. */
 export function FieldShell(props: Props) {
-  const { field, meta, issues, required, hasValue, hint, wide } = props;
+  const { field, meta, issues, required, hasValue, hint, wide, group } = props;
   const id = inputId(field);
   const flag = meta.flag;
   // The flag box is shown separately and already explains a missing extracted value.
@@ -33,20 +35,35 @@ export function FieldShell(props: Props) {
   const describedBy = [hint && `${id}-hint`, flag && `${id}-flag`, shownIssues.length && `${id}-issues`].filter(Boolean).join(' ') || undefined;
   const state = errors.length ? 'error' : flag?.level === 'conflict' ? 'conflict' : flag ? 'review' : warnings.length ? 'warning' : '';
   const badge = hasValue ? SOURCE_LABELS[meta.source] : '';
+  const className = `field${group ? ' field--group' : ''}${wide ? ' field--wide' : ''}${state ? ` field--${state}` : ''}`;
+  const labelText = (
+    <>
+      {FIELD_LABELS[field]}
+      {required && (
+        <span className="required" aria-hidden="true">
+          *
+        </span>
+      )}
+    </>
+  );
+  const badgeElement = badge && <span className={`badge badge--${meta.source}`}>{badge}</span>;
+  const Wrapper = group ? 'fieldset' : 'div';
 
   return (
-    <div className={`field${wide ? ' field--wide' : ''}${state ? ` field--${state}` : ''}`} onBlur={props.onBlur}>
-      <div className="field-head">
-        <label htmlFor={id} id={`${id}-label`}>
-          {FIELD_LABELS[field]}
-          {required && (
-            <span className="required" aria-hidden="true">
-              *
-            </span>
-          )}
-        </label>
-        {badge && <span className={`badge badge--${meta.source}`}>{badge}</span>}
-      </div>
+    <Wrapper className={className} onBlur={props.onBlur}>
+      {group ? (
+        <legend className="field-head" id={`${id}-label`}>
+          <span className="field-legend-text">{labelText}</span>
+          {badgeElement}
+        </legend>
+      ) : (
+        <div className="field-head">
+          <label htmlFor={id} id={`${id}-label`}>
+            {labelText}
+          </label>
+          {badgeElement}
+        </div>
+      )}
 
       {props.children({
         'aria-describedby': describedBy,
@@ -110,6 +127,6 @@ export function FieldShell(props: Props) {
           ))}
         </ul>
       )}
-    </div>
+    </Wrapper>
   );
 }

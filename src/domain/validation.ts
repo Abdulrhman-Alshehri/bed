@@ -5,10 +5,14 @@ import { normalizeDigits } from '../extraction/text';
 import { classifyVisitor } from './classification';
 import { VISITOR_TYPE_LABELS } from './labels';
 import { checkPhone } from './phone';
+import { totalPieces } from './formState';
 import { FIELD_ORDER, type DocType, type FieldKey, type FormState, type FormValues } from './types';
 
+/** Form fields plus the luggage step. */
+export type IssueField = FieldKey | 'luggage' | 'luggageSize';
+
 export interface Issue {
-  field: FieldKey;
+  field: IssueField;
   /** Errors block confirmation and export; warnings do not. */
   severity: 'error' | 'warning';
   message: string;
@@ -18,6 +22,7 @@ export interface Issue {
 
 function isEmpty(values: FormValues, field: FieldKey): boolean {
   if (field === 'phone') return !values.phoneNumber;
+  if (field === 'nationality') return !values.nationalityText.trim();
   return !(values as unknown as Record<string, string>)[field];
 }
 
@@ -56,8 +61,11 @@ export function validateDocNumber(docType: DocType | '', nationality: string, va
 export function validateForm(state: FormState, now = new Date()): Issue[] {
   const v = state.values;
   const issues: Issue[] = [];
-  const add = (field: FieldKey, severity: Issue['severity'], message: string, kind: Issue['kind'] = 'rule') =>
+  const add = (field: IssueField, severity: Issue['severity'], message: string, kind: Issue['kind'] = 'rule') =>
     issues.push({ field, severity, message, kind });
+
+  if (totalPieces(v) === 0) add('luggage', 'error', 'أدخل عدد قطع الأمتعة', 'required');
+  if (!v.luggageSize) add('luggageSize', 'error', 'اختر حجم الأمتعة', 'required');
 
   for (const field of REQUIRED_FIELDS) if (isEmpty(v, field)) add(field, 'error', 'هذا الحقل مطلوب', 'required');
   for (const field of RECOMMENDED_FIELDS) {
@@ -84,8 +92,12 @@ export function validateForm(state: FormState, now = new Date()): Issue[] {
     else if (ageOn(v.birthDate, now) > 120) add('birthDate', 'error', 'تاريخ الميلاد غير منطقي (العمر أكبر من 120 سنة)');
   }
 
+  if (v.nationalityText.trim() && !v.nationality) {
+    add('nationality', 'warning', 'لم تُطابَق الجنسية مع قائمة الدول، لذلك لن يُحدَّد نوع الزائر تلقائيًا. تأكد من كتابتها');
+  }
+
   if (v.phoneNumber) {
-    const phone = checkPhone(v.phoneCountry, v.phoneNumber);
+    const phone = checkPhone(v.phoneDialCode, v.phoneNumber);
     if (!phone.ok) add('phone', 'error', phone.message);
     else if (phone.fixedLine) add('phone', 'warning', 'يبدو أن الرقم رقم هاتف ثابت وليس رقم جوال');
   }

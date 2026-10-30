@@ -14,6 +14,8 @@ export interface FoundDate {
   /** Month-first order was detected (e.g. 12/25/1990). */
   monthFirst: boolean;
   hijri?: { year: number; month: number; day: number };
+  /** Zeros missing from the OCR reading were restored from the date's structure. */
+  reconstructed?: boolean;
   /** Character offset in the searched text. */
   index: number;
 }
@@ -141,6 +143,31 @@ function buildDate(year: number, a: number, b: number, raw: string, index: numbe
   return { iso, calendar: 'gregorian', raw, ambiguous, monthFirst, index };
 }
 
+/** Every number obtainable by inserting zeros into `digits` to reach a total length of `length`. */
+function withZeros(digits: string, minLength: number, maxLength: number): number[] {
+  const out = new Set<number>();
+  const grow = (s: string) => {
+    if (s.length >= minLength && s.length <= maxLength && !s.startsWith('0')) out.add(Number(s));
+    if (s.length >= maxLength) return;
+    for (let i = 0; i <= s.length; i++) grow(s.slice(0, i) + '0' + s.slice(i));
+  };
+  grow(digits);
+  return [...out];
+}
+
+function reconstructDate(y: string, m: string, d: string, raw: string, index: number, now: Date): FoundDate | null {
+  const candidates = new Map<string, FoundDate>();
+  for (const year of withZeros(y, 4, 4)) {
+    for (const month of withZeros(m, 1, 2)) {
+      for (const day of withZeros(d, 1, 2)) {
+        const found = buildDate(year, month, day, raw, index, true, now);
+        if (found?.iso) candidates.set(found.iso, { ...found, reconstructed: true });
+      }
+    }
+  }
+  return candidates.size === 1 ? [...candidates.values()][0]! : null;
+}
+
 /** Finds dates such as 12/05/1990, 1990-05-12, 1410/10/17 (Hijri), 12 MAY 1990 or 12 MAY/MAI 90. */
 export function findDates(text: string, now = new Date()): FoundDate[] {
   const src = normalizeDigits(text);
@@ -154,6 +181,12 @@ export function findDates(text: string, now = new Date()): FoundDate[] {
   // Y/M/D with a 4-digit year (ISO dates and Hijri dates printed year-first).
   for (const m of src.matchAll(/(?<!\d)(\d{4})\s?[\/.\-]\s?(\d{1,2})\s?[\/.\-]\s?(\d{1,2})(?!\d)/g)) {
     const found = buildDate(Number(m[1]), Number(m[2]), Number(m[3]), m[0], m.index, true, now);
+    if (found) results.push(found);
+  }
+  // Arabic-Indic dates whose zeros were dropped by OCR (٢٠٠٠/٠٨/١٤ read as ٢/٨/١٤): the PaddleOCR
+  // Arabic model cannot output «٠». Accepted only when exactly one valid date fits.
+  for (const m of text.matchAll(/(?<![٠-٩\d])([٠-٩]{1,3})\s?\/\s?([٠-٩]{1,2})\s?\/\s?([٠-٩]{1,2})(?![٠-٩\d])/g)) {
+    const found = reconstructDate(normalizeDigits(m[1]!), normalizeDigits(m[2]!), normalizeDigits(m[3]!), m[0], m.index, now);
     if (found) results.push(found);
   }
   // 12 MAY 1990, 12 MAY 90, 12MAY1990, 12 MAY/MAI 1990 (bilingual passports).

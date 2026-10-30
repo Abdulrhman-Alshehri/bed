@@ -13,25 +13,26 @@ export function classifyVisitor(nationality: string): VisitorType | '' {
   return GCC_COUNTRIES.includes(nationality) ? 'gcc' : 'international';
 }
 
-export interface CallingCodeSuggestion {
-  /** Country whose calling code should be selected. */
+export const DEFAULT_DIAL_CODE = getCountry(DEFAULT_PHONE_COUNTRY)!.dial!;
+
+export interface DialCodeSuggestion {
+  /** Calling code to fill in (digits). */
   selected: string;
-  /** Countries to list first in the calling-code selector. */
-  preferred: string[];
+  /** The nationality's calling code when it differs from the selected one, offered as a hint. */
+  alternative: string | null;
 }
 
 /**
  * BR-08 / BR-09: +966 by default; the nationality's calling code when it is known.
- * For Saudi national IDs and residence permits +966 stays selected unless configured otherwise,
- * because those holders live in Saudi Arabia (see SELECT_NATIONALITY_CODE_FOR_RESIDENT_DOCS).
+ * For Saudi national IDs and residence permits +966 stays unless configured otherwise, because
+ * those holders live in Saudi Arabia (see SELECT_NATIONALITY_CODE_FOR_RESIDENT_DOCS).
  */
-export function suggestCallingCountry(nationality: string, docType: DocType | ''): CallingCodeSuggestion {
-  const nationalityHasCode = !!getCountry(nationality)?.dial;
-  if (!nationalityHasCode) return { selected: DEFAULT_PHONE_COUNTRY, preferred: [DEFAULT_PHONE_COUNTRY] };
-  const preferred = [...new Set([nationality, DEFAULT_PHONE_COUNTRY])];
+export function suggestDialCode(nationality: string, docType: DocType | ''): DialCodeSuggestion {
+  const nationalityDial = getCountry(nationality)?.dial ?? null;
+  if (!nationalityDial) return { selected: DEFAULT_DIAL_CODE, alternative: null };
   const residentDoc = docType !== '' && RESIDENT_DOC_TYPES.includes(docType);
   if (residentDoc && !SELECT_NATIONALITY_CODE_FOR_RESIDENT_DOCS) {
-    return { selected: DEFAULT_PHONE_COUNTRY, preferred: [...new Set([DEFAULT_PHONE_COUNTRY, nationality])] };
+    return { selected: DEFAULT_DIAL_CODE, alternative: nationalityDial === DEFAULT_DIAL_CODE ? null : nationalityDial };
   }
-  return { selected: nationality, preferred };
+  return { selected: nationalityDial, alternative: null };
 }

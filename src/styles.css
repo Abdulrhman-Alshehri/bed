@@ -612,8 +612,7 @@ input[type='text'],
 input[type='tel'],
 input[type='date'],
 input:not([type]),
-select,
-.combobox input {
+select {
   width: 100%;
   min-height: var(--control-height);
   padding: 8px 12px;
@@ -752,78 +751,392 @@ select {
   gap: 4px;
 }
 
-/* Combobox -------------------------------------------------------------- */
+/* Choice buttons (radio groups) ------------------------------------------- */
 
-.combobox {
-  position: relative;
-}
-
-.combobox input {
-  padding-inline-end: 76px;
-}
-
-.combobox-buttons {
-  position: absolute;
-  inset-inline-end: 6px;
-  top: 6px;
-  display: flex;
-  gap: 2px;
-}
-
-.combobox-list {
-  position: absolute;
-  z-index: 20;
-  inset-inline: 0;
-  top: calc(100% + 4px);
-  max-height: 280px;
+fieldset.field {
   margin: 0;
-  padding: 4px;
-  overflow-y: auto;
-  list-style: none;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 24px rgb(16 24 40 / 14%);
+  padding: 0;
+  border: 0;
+  min-width: 0;
 }
 
-.combobox-option {
+legend.field-head {
+  float: inline-start;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+legend.field-head + * {
+  clear: both;
+}
+
+.field-legend-text {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.choices--5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+/* Sizes stay in one row on phones, in the same order as the measuring wall. */
+@media (max-width: 420px) {
+  .choices--5 {
+    gap: 6px;
+  }
+
+  .choices--5 .choice {
+    padding-inline: 2px;
+    font-size: 0.9rem;
+  }
+}
+
+.choice {
+  position: relative;
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 52px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.choice input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
   cursor: pointer;
 }
 
-.combobox-option[aria-selected='true'] {
-  background: var(--primary-soft);
-  outline: 1px solid var(--primary);
+.choice:hover {
+  border-color: var(--primary);
 }
 
-.combobox-option.is-selected {
-  font-weight: 700;
+.choice.is-checked {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
 }
 
-.combobox-option-en {
-  color: var(--text-muted);
-  font-size: 0.85rem;
+.choice:has(input:focus-visible) {
+  box-shadow: var(--focus-ring);
 }
 
-.combobox-empty {
-  padding: 8px 10px;
-  color: var(--text-muted);
+.choice-detail {
+  font-size: 0.8rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.field--review .choices .choice:not(.is-checked) {
+  border-color: var(--review-border);
+}
+
+.field--review .choice.is-checked {
+  background: var(--review);
+  border-color: var(--review);
+}
+
+.field--error .choice:not(.is-checked) {
+  border-color: var(--error);
 }
 
 /* Phone ----------------------------------------------------------------- */
 
 .phone-row {
   display: grid;
-  grid-template-columns: minmax(120px, 42%) minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
   gap: 8px;
 }
 
 .phone-code {
-  direction: ltr;
+  position: relative;
+  display: block;
+}
+
+.phone-plus {
+  position: absolute;
+  inset-inline-start: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.phone-code input {
+  padding-inline-start: 26px;
+}
+
+.field-readout--match {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+}
+
+/* Steps ----------------------------------------------------------------- */
+
+.stepper-nav {
+  padding-top: 16px;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stepper button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.stepper-number {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-alt);
+  border: 1px solid var(--border-strong);
+}
+
+.stepper .is-current button {
+  border-color: var(--primary);
+  color: var(--text);
+  box-shadow: inset 0 -3px 0 var(--primary);
+}
+
+.stepper .is-current .stepper-number,
+.stepper .is-done .stepper-number {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+@media (max-width: 480px) {
+  .stepper-label {
+    font-size: 0.8rem;
+    line-height: 1.3;
+  }
+}
+
+main.container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-block: 16px 32px;
+}
+
+main .layout {
+  padding-block: 0;
+}
+
+.step-panel {
+  max-width: 920px;
+  width: 100%;
+  margin-inline: auto;
+}
+
+.step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.step-actions .btn-danger-text {
+  margin-inline-start: auto;
+}
+
+.step-actions--bar {
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+@media (max-width: 560px) {
+  .step-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .step-actions .btn-danger-text {
+    margin-inline-start: 0;
+  }
+}
+
+/* Luggage --------------------------------------------------------------- */
+
+.luggage {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.luggage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 520px) {
+  .luggage-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.luggage-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.luggage-item.has-count {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.luggage-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.counter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.counter-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.counter-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.counter-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.counter-value {
+  min-width: 28px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--text);
+}
+
+.luggage-total {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.luggage-total strong {
+  color: var(--text);
+  font-size: 1.1rem;
+}
+
+/* Review ---------------------------------------------------------------- */
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.review-tables {
+  display: grid;
+  gap: 16px;
+}
+
+@media (min-width: 760px) {
+  .review-tables {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    align-items: start;
+  }
+}
+
+.review-section h3 {
+  font-size: 1rem;
+  margin-bottom: 6px;
+}
+
+.confirmed {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid #a7d7b8;
+  border-radius: var(--radius-sm);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.confirmed svg {
+  flex-shrink: 0;
+}
+
+.confirmed-title {
+  font-weight: 700;
+  font-size: 1.05rem;
 }
 
 /* Hijri helper ---------------------------------------------------------- */
@@ -854,39 +1167,6 @@ select {
 .hijri-inputs .btn {
   grid-column: 1 / -1;
   justify-self: start;
-}
-
-/* Actions --------------------------------------------------------------- */
-
-.action-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.action-bar .btn-danger-text {
-  margin-inline-start: auto;
-}
-
-@media (max-width: 560px) {
-  .action-bar {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .action-bar .btn-primary {
-    grid-column: 1 / -1;
-  }
-
-  .action-bar .btn-danger-text {
-    margin-inline-start: 0;
-  }
-}
-
-.action-hint {
-  margin-top: -8px;
 }
 
 /* Dialogs --------------------------------------------------------------- */
