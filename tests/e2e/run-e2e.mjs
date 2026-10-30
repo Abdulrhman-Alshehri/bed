@@ -115,7 +115,7 @@ const readForm = (p = page) =>
       visitorType: choice('visitorType'),
       visitType: choice('visitType'),
       nationality: val('field-nationality'),
-      birthDate: val('field-birthDate'),
+      birthDate: document.getElementById('field-birthDate')?.dataset.value ?? null,
       phoneDialCode: val('field-phone-code'),
       luggageCenter: choice('luggageCenter'),
       gender: choice('gender'),
@@ -169,7 +169,7 @@ await page.goto(appUrl);
 ok((await page.title()) === 'تسجيل الزوار', 'page loads under a subpath');
 ok((await page.getAttribute('html', 'dir')) === 'rtl', 'document is RTL');
 ok((await page.locator('#step-title').textContent()) === 'الأمتعة', 'the first step is the luggage');
-ok((await page.locator('select').count()) === 0, 'no drop-down lists');
+ok((await page.locator('select').count()) === 0, 'no drop-down lists (luggage step)');
 
 console.log('\nLuggage step');
 await page.getByRole('button', { name: 'التالي: بيانات الزائر' }).click();
@@ -186,6 +186,7 @@ ok((await page.locator('input[name=luggageSize]:checked').getAttribute('value'))
 await page.screenshot({ path: join(out, 'desktop-luggage.png'), fullPage: true });
 await page.getByRole('button', { name: 'التالي: بيانات الزائر' }).click();
 await page.locator('#field-fullName').waitFor();
+ok((await page.locator('select').count()) === 0, 'no drop-down lists (visitor step)');
 let form = await readForm();
 ok(
   form.visitType === 'prayer' && form.luggageCenter === 'madinah' && form.phoneDialCode === '966' && form.gender === '',
@@ -278,6 +279,8 @@ console.log(`  (OCR took ${(ms / 1000).toFixed(1)} s)`);
 form = await readForm();
 checkExpected(form, IQAMA.expected);
 ok(['فاطمة علي التجربة', 'FATIMA ALI ALTEST'].includes(form.fullName), 'labeled name found', form.fullName);
+ok(await page.locator('.date-evidence img').isVisible(), 'birth date shown as printed, for comparison');
+ok((await page.locator('#field-birthDate').inputValue()) === '03/11/1985', 'birth date shown day first', await page.locator('#field-birthDate').inputValue());
 await page.screenshot({ path: join(out, 'desktop-iqama.png'), fullPage: true });
 
 console.log('\nNational ID (Hijri birth date)');
@@ -288,7 +291,8 @@ console.log(`  (OCR took ${(ms / 1000).toFixed(1)} s)`);
 form = await readForm();
 checkExpected(form, NATIONAL_ID.expected);
 const readout = await page.locator('#field-birthDate ~ .field-readout').textContent().catch(() => '');
-ok(readout.includes('1410') && readout.includes('شوال'), 'birth date converted from Hijri 1410/10/17', readout);
+ok(readout.includes('1410') && readout.includes('شوال'), 'birth date converted from Hijri ١٤١٠/١٠/١٧', readout);
+ok((await page.locator('#field-birthDate').inputValue()) === '17/10/1410', 'national ID birth date shown in Hijri', await page.locator('#field-birthDate').inputValue());
 ok(await page.getByText('مقترح من الاسم').isVisible(), 'gender not on the card: suggested from the name and flagged for review');
 ok(form.fullName === 'سعد عبدالله التجربة', 'unlabeled Arabic name found', form.fullName);
 await page.screenshot({ path: join(out, 'desktop-national-id.png'), fullPage: true });

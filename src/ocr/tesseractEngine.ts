@@ -131,6 +131,8 @@ export class TesseractEngine implements OcrEngine {
         preserve_interword_spaces: '1',
         // Images are normalized to a known size, so the resolution estimate (and its log line) is not needed.
         user_defined_dpi: '300',
+        // Tesseract's diagnostic messages («Detected 37 diacritics») would otherwise appear as console errors.
+        debug_file: '/dev/null',
       });
       const result = await withTimeout(
         worker.recognize(image, {}, { text: true, blocks: true }),

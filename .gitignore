@@ -7,3 +7,9 @@ tests/e2e/output/
 *.log
 .DS_Store
 *.tsbuildinfo
+tools/digit-model/fonts/
+tools/digit-model/*.npz
+tools/digit-model/model*.json
+tools/digit-model/synth-scores.pkl
+tools/digit-model/samples/
+__pycache__/

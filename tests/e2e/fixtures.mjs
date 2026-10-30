@@ -1,5 +1,6 @@
 // Synthetic, clearly fictional identity documents rendered as images for end-to-end tests.
 // They are NOT real document layouts: they exercise the OCR pipeline and extraction rules only.
+// Saudi cards print dates in Arabic-Indic digits (read by the digit reader); the passport uses Latin digits.
 
 const v = (c) => (c === '<' ? 0 : /\d/.test(c) ? Number(c) : c.charCodeAt(0) - 55);
 const check = (s) => [...s].reduce((sum, c, i) => sum + v(c) * [7, 3, 1][i % 3], 0) % 10;
@@ -91,7 +92,7 @@ export const IQAMA = {
        <div class="l">الاسم: فاطمة علي التجربة</div>
        <div class="l">رقم الهوية: ${iqamaNumber}</div>
        <div class="l">الجنسية: باكستان</div>
-       <div class="l">تاريخ الميلاد: 03/11/1985</div>
+       <div class="l">تاريخ الميلاد: ١٩٨٥/١١/٠٣</div>
        <div class="l">الجنس: أنثى</div>
      </div>
      <div class="l">Name: FATIMA ALI ALTEST</div>
@@ -119,8 +120,8 @@ export const NATIONAL_ID = {
      <div class="ar">
        <div class="l">سعد عبدالله التجربة</div>
        <div class="l">رقم الهوية: ${nationalIdNumber}</div>
-       <div class="l">تاريخ الميلاد: 1410/10/17</div>
-       <div class="l">تاريخ الانتهاء: 1450/01/01</div>
+       <div class="l">تاريخ الميلاد: ١٤١٠/١٠/١٧</div>
+       <div class="l">تاريخ الانتهاء: ١٤٥٠/٠١/٠١</div>
      </div>`,
     1200,
     700,

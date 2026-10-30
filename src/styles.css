@@ -1139,34 +1139,59 @@ main .layout {
   font-size: 1.05rem;
 }
 
-/* Hijri helper ---------------------------------------------------------- */
+/* Birth date ------------------------------------------------------------ */
 
-.hijri-helper summary {
-  cursor: pointer;
-  color: var(--primary);
-  font-size: 0.85rem;
+.calendar-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.calendar-option {
+  min-height: 34px;
+  padding: 4px 14px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--text-muted);
   font-weight: 600;
+  cursor: pointer;
 }
 
-.hijri-inputs {
-  display: grid;
-  grid-template-columns: 70px minmax(110px, 1fr) 90px;
-  gap: 8px;
-  align-items: end;
-  margin-top: 8px;
+.calendar-option[aria-pressed='true'] {
+  background: var(--primary);
+  color: var(--on-primary);
 }
 
-.hijri-inputs label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.calendar-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.date-evidence {
+  margin: 8px 0 0;
+  padding: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.date-evidence img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+  border-radius: 4px;
+}
+
+.date-evidence figcaption {
+  margin-top: 4px;
+  color: var(--text-muted);
   font-size: 0.8rem;
-  font-weight: 400;
-}
-
-.hijri-inputs .btn {
-  grid-column: 1 / -1;
-  justify-self: start;
 }
 
 /* Dialogs --------------------------------------------------------------- */
