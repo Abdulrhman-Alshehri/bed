@@ -46,6 +46,7 @@ export const SOURCE_LABELS: Record<ValueSource, string> = {
   default: 'قيمة افتراضية',
   ocr: 'مستخرج من النص',
   mrz: 'مستخرج من MRZ',
+  barcode: 'مقروء من الباركود',
   rule: 'حسب القاعدة',
   user: 'معدّل يدويًا',
 };

@@ -1,6 +1,6 @@
 import { COUNTRIES } from '../data/countries';
 import { NATIONALITY_ALIASES } from '../data/nationalityAliases';
-import { foldArabic } from './text';
+import { editDistance, foldArabic } from './text';
 
 export interface NationalityMatch {
   code: string;
@@ -111,4 +111,25 @@ export function findNationalityInText(text: string): NationalityMatch | null {
     if (found.size > 1) return null;
   }
   return null;
+}
+
+/**
+ * Tolerates one misread letter (two in long names), e.g. «افغاتستان». Only for text printed right
+ * next to a nationality label, where the context makes a loose match safe. Null when ambiguous.
+ */
+export function findNationalityFuzzy(text: string): NationalityMatch | null {
+  const words = foldKey(text).split(' ').filter(Boolean);
+  const found = new Set<string>();
+  for (let size = Math.min(3, words.length); size >= 1 && found.size === 0; size--) {
+    for (let i = 0; i + size <= words.length; i++) {
+      const phrase = stripArticle(words.slice(i, i + size).join(' '));
+      if (phrase.length < 5) continue;
+      const tolerance = phrase.length >= 8 ? 2 : 1;
+      for (const [key, code] of index) {
+        const candidate = stripArticle(key);
+        if (Math.abs(candidate.length - phrase.length) <= tolerance && editDistance(candidate, phrase) <= tolerance) found.add(code);
+      }
+    }
+  }
+  return found.size === 1 ? { code: [...found][0]!, exact: false } : null;
 }

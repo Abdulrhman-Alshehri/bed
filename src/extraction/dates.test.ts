@@ -68,3 +68,15 @@ describe('formatGregorianArabic', () => {
     expect(formatGregorianArabic('1990-05-12')).toContain('مايو');
   });
 });
+
+describe('Arabic-Indic dates with dropped zeros', () => {
+  it('restores zeros when only one valid date fits', () => {
+    expect(findDates('٢/٨/١٤', FIXED_NOW)[0]).toMatchObject({ iso: '2000-08-14', reconstructed: true });
+    expect(findDates('٢٢٦/٤/١٨', FIXED_NOW)[0]).toMatchObject({ iso: '2026-04-18', reconstructed: true });
+  });
+
+  it('gives up when several dates fit', () => {
+    // 1410/03/05 or 1401/03/05 (Hijri).
+    expect(findDates('١٤١/٣/٥', FIXED_NOW)).toHaveLength(0);
+  });
+});

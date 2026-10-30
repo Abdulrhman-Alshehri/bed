@@ -28,6 +28,8 @@ export type OcrStatus =
 export function useDocumentOcr() {
   const [doc, setDoc] = useState<LoadedDocument | null>(null);
   const [status, setStatus] = useState<OcrStatus>({ phase: 'idle' });
+  /** A new image is being decoded (large phone photos take a moment). */
+  const [decoding, setDecoding] = useState(false);
   const engineRef = useRef<OcrEngine | null>(null);
   const runRef = useRef(0);
   const docRef = useRef<LoadedDocument | null>(null);
@@ -46,10 +48,13 @@ export function useDocumentOcr() {
       if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) return MESSAGES.unsupportedFile;
       if (file.size > MAX_UPLOAD_BYTES) return MESSAGES.fileTooLarge;
       let bitmap: ImageBitmap;
+      setDecoding(true);
       try {
         bitmap = await decodeImage(file);
       } catch {
         return MESSAGES.imageUnreadable;
+      } finally {
+        setDecoding(false);
       }
       replaceDoc({ bitmap, rotation: 0, name: file.name });
       return null;
@@ -108,5 +113,5 @@ export function useDocumentOcr() {
     [],
   );
 
-  return { doc, status, load, rotate, remove, extract, reset };
+  return { doc, status, decoding, load, rotate, remove, extract, reset };
 }

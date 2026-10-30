@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findNationalityInText, matchNationality } from './nationality';
+import { findNationalityFuzzy, findNationalityInText, matchNationality } from './nationality';
 import { countryFromMrzCode, searchCountries } from '../data/countries';
 
 describe('matchNationality', () => {
@@ -63,5 +63,17 @@ describe('searchCountries', () => {
     expect(searchCountries('egy')[0]?.code).toBe('EG');
     expect(searchCountries('السعو')[0]?.code).toBe('SA');
     expect(searchCountries('pak')[0]?.code).toBe('PK');
+  });
+});
+
+describe('findNationalityFuzzy', () => {
+  it('tolerates one misread letter', () => {
+    expect(findNationalityFuzzy('افغاتستان')?.code).toBe('AF');
+    expect(findNationalityFuzzy('باكستاف')?.code).toBe('PK');
+  });
+
+  it('rejects short or ambiguous text', () => {
+    expect(findNationalityFuzzy('الاسلام')).toBeNull();
+    expect(findNationalityFuzzy('مص')).toBeNull();
   });
 });

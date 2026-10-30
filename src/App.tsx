@@ -47,7 +47,7 @@ export function App() {
     () => (state.extracted || reviewAttempted ? new Set(FIELD_ORDER) : touched),
     [state.extracted, reviewAttempted, touched],
   );
-  const busy = ocr.status.phase === 'running';
+  const busy = ocr.status.phase === 'running' || ocr.decoding;
 
   const show = useCallback((next: Message) => {
     clearTimeout(messageTimer.current);
@@ -168,7 +168,7 @@ export function App() {
           <StatusMessage message={docMessage} onDismiss={() => setDocMessage(null)} />
           <button type="button" className="btn btn-primary btn-block btn-lg" disabled={busy} onClick={onExtract}>
             <ScanText aria-hidden="true" size={20} />
-            استخراج البيانات
+            {ocr.decoding ? 'جاري تجهيز الصورة…' : 'استخراج البيانات'}
           </button>
           <OcrStatusPanel status={ocr.status} onRetry={onExtract} />
         </section>

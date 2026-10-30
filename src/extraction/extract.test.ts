@@ -54,8 +54,8 @@ describe('extractFields: Saudi documents', () => {
     expect(result.fields.fullName?.value).toBe('سعد عبدالله التجربة');
     expect(result.fields.birthDate?.value).toBe(hijriToGregorian(1410, 10, 17));
     expect(result.fields.birthDate?.note).toContain('هجري');
-    // Gender is not printed, so it must not be invented.
-    expect(result.fields.gender).toBeUndefined();
+    // Gender is not printed: only a low-confidence suggestion from the name, flagged for review.
+    expect(result.fields.gender).toMatchObject({ value: 'male', confidence: 'low', source: 'rule' });
   });
 
   it('reads a residence permit and prefers the holder number over a sponsor number', () => {

@@ -1,4 +1,5 @@
 // Image loading and preparation for OCR. Runs entirely in the browser on a <canvas>.
+import { findCardRegion } from './cardRegion';
 import type { BBox } from './types';
 
 export type Rotation = 0 | 90 | 180 | 270;
@@ -39,14 +40,9 @@ function enhance(canvas: HTMLCanvasElement) {
   ctx.putImageData(image, 0, 0);
 }
 
-/**
- * Rotates the image and enhances contrast. Native resolution is kept where possible: small images
- * are enlarged by an integer factor and very large ones reduced, because fractional resampling
- * measurably degraded Arabic recognition in testing.
- */
-export function prepareForOcr(bitmap: ImageBitmap, rotation: Rotation): HTMLCanvasElement {
-  const longest = Math.max(bitmap.width, bitmap.height);
-  const scale = longest > 2600 ? 2600 / longest : longest < 1000 ? 2 : 1;
+/** Applies the manual rotation. Very large photos are reduced to 3200 px to bound memory use. */
+export function orient(bitmap: ImageBitmap, rotation: Rotation): HTMLCanvasElement {
+  const scale = Math.min(1, 3200 / Math.max(bitmap.width, bitmap.height));
   const w = bitmap.width * scale;
   const h = bitmap.height * scale;
   const swap = rotation === 90 || rotation === 270;
@@ -56,6 +52,42 @@ export function prepareForOcr(bitmap: ImageBitmap, rotation: Rotation): HTMLCanv
   ctx.translate(canvas.width / 2, canvas.height / 2);
   ctx.rotate((rotation * Math.PI) / 180);
   ctx.drawImage(bitmap, -w / 2, -h / 2, w, h);
+  return canvas;
+}
+
+/** Crops to the document when it stands out from the background; otherwise returns the input. */
+export function cropToCard(source: HTMLCanvasElement): HTMLCanvasElement {
+  const scale = Math.min(1, 400 / Math.max(source.width, source.height));
+  const small = createCanvas(source.width * scale, source.height * scale);
+  const sctx = small.getContext('2d', { willReadFrequently: true })!;
+  sctx.drawImage(source, 0, 0, small.width, small.height);
+  const px = sctx.getImageData(0, 0, small.width, small.height).data;
+  const gray = new Uint8ClampedArray(small.width * small.height);
+  for (let i = 0; i < gray.length; i++) gray[i] = (px[i * 4]! * 299 + px[i * 4 + 1]! * 587 + px[i * 4 + 2]! * 114) / 1000;
+  const region = findCardRegion(gray, small.width, small.height);
+  releaseCanvas(small);
+  if (!region) return source;
+  const x0 = region.x0 / scale;
+  const y0 = region.y0 / scale;
+  const w = (region.x1 - region.x0) / scale;
+  const h = (region.y1 - region.y0) / scale;
+  const canvas = createCanvas(w, h);
+  canvas.getContext('2d')!.drawImage(source, x0, y0, w, h, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+/**
+ * Scales and enhances contrast for OCR. Native resolution is kept where possible: small images are
+ * enlarged by an integer factor and very large ones reduced, because fractional resampling
+ * measurably degraded Arabic recognition in testing.
+ */
+export function prepareForOcr(source: HTMLCanvasElement): HTMLCanvasElement {
+  const longest = Math.max(source.width, source.height);
+  const scale = longest > 2600 ? 2600 / longest : longest < 1000 ? 2 : 1;
+  const canvas = createCanvas(source.width * scale, source.height * scale);
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
   enhance(canvas);
   return canvas;
 }

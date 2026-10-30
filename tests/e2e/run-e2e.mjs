@@ -40,6 +40,7 @@ const MIME = {
   '.woff': 'font/woff',
   '.json': 'application/json',
   '.gz': 'application/gzip',
+  '.wasm': 'application/wasm',
 };
 const BASE = '/bed/';
 const server = createServer(async (req, res) => {
@@ -166,7 +167,8 @@ form = await readForm();
 checkExpected(form, PASSPORT.expected);
 ok(await page.getByText('تم استخراج البيانات، يرجى التأكد من صحتها').isVisible(), 'success message shown');
 const altNames = await page.locator('#field-fullName ~ .suggestions .suggestion-value').allTextContents();
-ok(altNames.includes('محمد أحمد التجربة'), 'Arabic name offered as an alternative (exact)', JSON.stringify(altNames));
+// The Arabic alternative must be the name only: no label and no words from other columns.
+ok(altNames.some((n) => /^محمد أحمد \S*تجربة$/.test(n)), 'Arabic name offered as an alternative, without the label or other text', JSON.stringify(altNames));
 await page.screenshot({ path: join(out, 'desktop-passport.png'), fullPage: true });
 
 console.log('\nReview, export and copy');
@@ -219,7 +221,7 @@ form = await readForm();
 checkExpected(form, NATIONAL_ID.expected);
 const readout = await page.locator('#field-birthDate ~ .field-readout').textContent().catch(() => '');
 ok(readout.includes('1410') && readout.includes('شوال'), 'birth date converted from Hijri 1410/10/17', readout);
-ok(await page.getByText('لم يُذكر الجنس بوضوح').isVisible(), 'missing gender is flagged, not invented');
+ok(await page.getByText('مقترح من الاسم').isVisible(), 'gender not on the card: suggested from the name and flagged for review');
 ok(form.fullName === 'سعد عبدالله التجربة', 'unlabeled Arabic name found', form.fullName);
 await page.screenshot({ path: join(out, 'desktop-national-id.png'), fullPage: true });
 

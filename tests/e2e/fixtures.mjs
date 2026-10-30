@@ -107,7 +107,8 @@ export const NATIONAL_ID = {
     docType: 'national_id',
     docNumber: nationalIdNumber,
     nationality: 'SA',
-    gender: '',
+    // Not printed on the card: suggested from the name «سعد» and flagged for review.
+    gender: 'male',
     visitorType: 'gcc',
     phoneCountry: 'SA',
   },

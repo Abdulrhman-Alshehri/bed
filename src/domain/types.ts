@@ -43,7 +43,7 @@ export type FieldKey = (typeof FIELD_ORDER)[number];
 export type ExtractableKey = 'docType' | 'fullName' | 'docNumber' | 'nationality' | 'birthDate' | 'gender';
 
 /** Where the current value of a field came from. */
-export type ValueSource = 'empty' | 'default' | 'ocr' | 'mrz' | 'rule' | 'user';
+export type ValueSource = 'empty' | 'default' | 'ocr' | 'mrz' | 'barcode' | 'rule' | 'user';
 
 export interface Flag {
   /** review: uncertain value, conflict: the document contains contradicting values. */

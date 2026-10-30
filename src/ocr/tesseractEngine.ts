@@ -125,7 +125,8 @@ export class TesseractEngine implements OcrEngine {
     try {
       const worker = await this.getWorker(options.language);
       await worker.setParameters({
-        tessedit_pageseg_mode: options.layout === 'block' ? Tesseract.PSM.SINGLE_BLOCK : Tesseract.PSM.AUTO,
+        tessedit_pageseg_mode:
+          options.layout === 'block' ? Tesseract.PSM.SINGLE_BLOCK : options.layout === 'sparse' ? Tesseract.PSM.SPARSE_TEXT : Tesseract.PSM.AUTO,
         tessedit_char_whitelist: options.charWhitelist ?? '',
         preserve_interword_spaces: '1',
         // Images are normalized to a known size, so the resolution estimate (and its log line) is not needed.
