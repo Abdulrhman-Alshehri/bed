@@ -11,7 +11,7 @@ import { countryFromMrzCode, countryName } from '../data/countries';
 import type { DocType, Gender, Suggestion } from '../domain/types';
 import type { DigitDate } from '../ocr/digitReader';
 import type { OcrLine, OcrPage } from '../ocr/types';
-import { ageOn, findDates, formatHijriArabic, todayIso, type FoundDate } from './dates';
+import { ageOn, findDates, formatHijriArabic, toIsoDate, todayIso, type FoundDate } from './dates';
 import { findLabels, foldSameLength, hasAnyLabel } from './fieldLabels';
 import { genderFromArabicName } from './genderFromName';
 import { buildLayout, cellsOf, labelFor, valuesForLabel, type Cell, type Layout } from './layout';
@@ -606,14 +606,25 @@ function withPrintedBirthDate(
   visual: BirthDecision,
   printed: ExtractionInput['printedDigits'],
   docNumber: Candidate | null,
-  textIsReliable: boolean,
+  textDate: FoundDate | null,
 ): BirthDecision {
   const r = printed?.birth;
   if (!r) return visual;
   const viz = visual.candidate;
   const reading: Suggestion = { value: r.iso, display: r.iso, reason: `قراءة الأرقام المطبوعة (${r.printed})` };
-  if (viz && textIsReliable) {
-    if (viz.value === r.iso || !r.confident) return visual;
+  // The OCR engine reads Latin digits well but Arabic-Indic ones poorly. An unlabeled date (the
+  // oldest one on the card) never outweighs a reading next to the label.
+  const textIsReliable = visual.labeled && !!textDate && !textDate.arabicIndic && !textDate.reconstructed;
+  if (viz && textDate && textIsReliable) {
+    if (!r.confident) return visual;
+    // National IDs print the date twice (Gregorian in Latin digits, Hijri in Arabic-Indic): when
+    // both agree, the date is confirmed, and an ambiguous day/month order is settled. Hijri
+    // conversion can differ by one day.
+    const agrees = (iso: string) => daysBetween(iso, r.iso) <= (r.calendar === 'hijri' ? 1 : 0);
+    const [y, m, d] = viz.value.split('-').map(Number) as [number, number, number];
+    const swapped = textDate.ambiguous ? toIsoDate(y, d, m) : null;
+    if (!viz.conflict && agrees(viz.value)) return { ...visual, candidate: { value: viz.value, confidence: 'high', source: 'ocr' } };
+    if (!viz.conflict && swapped && agrees(swapped)) return { ...visual, candidate: { value: swapped, confidence: 'high', source: 'ocr' } };
     return { ...visual, candidate: { ...viz, alternatives: [...(viz.alternatives ?? []), reading] } };
   }
   const alternatives: Suggestion[] = [
@@ -781,12 +792,9 @@ export function extractFields(input: ExtractionInput): ExtractionResult {
   const dates = collectDates(layouts, now);
   const textBirth = decideVisualBirthDate(dates, now);
   warnings.push(...textBirth.warnings);
-  // The OCR engine reads Latin digits well but Arabic-Indic ones poorly: those are the digit reader's.
-  const textDate = dates.find((e) => e.date.iso === textBirth.candidate?.value)?.date;
-  // An unlabeled date (the oldest one on the card) never outweighs a reading next to the label.
-  const textIsReliable = textBirth.labeled && !!textDate && !textDate.arabicIndic && !textDate.reconstructed;
+  const textDate = dates.find((e) => e.date.iso === textBirth.candidate?.value)?.date ?? null;
   // The MRZ's birth date has a check digit; the digit reader is for cards without one.
-  const visualBirth = mrz ? textBirth : withPrintedBirthDate(textBirth, input.printedDigits, docNumber, textIsReliable);
+  const visualBirth = mrz ? textBirth : withPrintedBirthDate(textBirth, input.printedDigits, docNumber, textDate);
   const birthDate = decideBirthDate(mrz, visualBirth);
   const gender = decideGender(mrz, mrzReliable, allCells, names.arabic);
 

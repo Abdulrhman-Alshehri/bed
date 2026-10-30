@@ -63,7 +63,10 @@ export async function runExtraction(
     const result = extractFields({ latin, mrz: mrzPage, arabic, barcodes, printedDigits: printed });
     if (printed?.birthImage) result.evidence = { birthDate: printed.birthImage };
     if (Math.max(bitmap.width, bitmap.height) < 1000) result.warnings.unshift(MESSAGES.lowResolution);
-    if (result.stats.mrz !== 'valid' && result.stats.meanConfidence < 55) result.warnings.unshift(MESSAGES.lowConfidence);
+    // A decoded barcode or a valid MRZ shows the image is sharp, whatever the OCR's mean confidence
+    // (which drops on screenshots with phone interface around the card).
+    const sharp = result.stats.mrz === 'valid' || result.fields.docNumber?.source === 'barcode';
+    if (!sharp && result.stats.meanConfidence < 55) result.warnings.unshift(MESSAGES.lowConfidence);
     onProgress({ stage: 'analyzing', progress: 1 });
     return result;
   } finally {

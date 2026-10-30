@@ -195,6 +195,18 @@ describe('Arabic-Indic birth dates from the digit reader', () => {
     expect((c?.alternatives ?? []).some((a) => a.value === '1985-03-11')).toBe(false);
   });
 
+  it('confirms a Latin-digit date with the Hijri date printed beside it, settling the day/month order', () => {
+    const hijri = { iso: '2003-12-08', calendar: 'hijri' as const, hijri: { year: 1424, month: 10, day: 14 }, printed: '١٤٢٤/١٠/١٤' };
+    const dob = [at('DOB: 08/12/2003', 300, 373, 560)];
+    const confirmed = run(reading(hijri), null, dob);
+    expect(confirmed).toMatchObject({ value: '2003-12-08', confidence: 'high' });
+    expect(confirmed?.note).toBeUndefined();
+    // Same card if the Hijri date meant 12 August: the swapped order is taken.
+    expect(run(reading({ ...hijri, iso: '2003-08-12' }), null, dob)).toMatchObject({ value: '2003-08-12', confidence: 'high' });
+    // An uncertain Hijri reading confirms nothing: the ambiguity stays flagged.
+    expect(run(reading({ ...hijri, confident: false }), null, dob)).toMatchObject({ value: '2003-12-08', confidence: 'low' });
+  });
+
   it('prefers the digit reader over the OCR engine’s reading of Arabic-Indic digits', () => {
     const c = run(reading(), null, [at('تاريخ الميلاد: ٢٠٠٠/٠٨/١١', 100, 200, 600)]);
     expect(c).toMatchObject({ value: '2000-08-14', confidence: 'medium' });

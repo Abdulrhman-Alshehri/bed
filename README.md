@@ -46,6 +46,7 @@ This app was built to the BRD's requirement that OCR runs without a mandatory ba
 |---|---|---|
 | Passport MRZ (number, nationality, birth date, sex, Latin name) | **High** when the MRZ is sharp | Check digits detect misreads, so a failed check is flagged instead of trusted. Names have no check digit. |
 | Saudi ID / Iqama number | **High** | Read from the barcode when it is in focus (all four photos of the test Iqama), otherwise from the digits with Luhn validation. |
+| Saudi digital national ID (Tawakkalna screenshot) | **High** in the one test so far | One real ID, shared by its owner for testing (not kept): all six fields correct; the Hijri date read by the digit reader confirmed the Gregorian date printed in Latin digits and settled its day/month order. |
 | GCC ID cards (back side with MRZ) | Medium–high | TD1 MRZ. Some cards (e.g. UAE) store the personal ID number in the optional data; it is suggested, with the card number as an alternative. |
 | Nationality next to its label | Medium | Matched against the country list, Arabic adjectives and English demonyms, allowing one or two misread letters (`افغاتستان` → أفغانستان). |
 | Dates next to a label | Medium | Day/month order is assumed day-first and flagged when ambiguous (05/06/1990). |
